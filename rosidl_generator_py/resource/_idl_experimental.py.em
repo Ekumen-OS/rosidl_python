@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import dataclasses
 
-from rosidl_runtime_py.experimental import (
+from rosidl_runtime_cpython import (
     Array,
     BoundedSequence,
     BoundedString,

@@ -85,7 +85,8 @@ for m in message.structure.members:
 }@
 
 class @(message.structure.namespaced_type.name):
-    """Experimental message class '@(message.structure.namespaced_type.name)'.
+    """
+    Experimental message class '@(message.structure.namespaced_type.name)'.
 
     Uses experimental container types from rosidl_runtime_py.experimental.
     """
@@ -157,11 +158,8 @@ if not is_empty_struct:
 }@
     @@dataclasses.dataclass(slots=True)
     class ExternalStorage:
-        """External memory descriptors for zero-copy initialization.
-
-        Attributes:
-            block: Optional contiguous buffer for entire message.
-            members: Per-field storage descriptors.
+        """
+        External memory descriptors for zero-copy initialization.
 
         Each field descriptor specifies the external memory region(s) to use
         when constructing a message with _storage= parameter.  All fields use
@@ -175,6 +173,7 @@ if not is_empty_struct:
         @@dataclasses.dataclass(slots=True)
         class Members:
             """Per-field storage descriptors."""
+
 @[if storage_fields]@
 @[  for name, storage_type in storage_fields]@
             @(name): @(storage_type) | None = None
@@ -371,4 +370,4 @@ submsg_list = list(experimental_submsg_members(message))
         return '@(message.structure.namespaced_type.name)({})'.format(', '.join(fields))
 @[else]@
         return '@(message.structure.namespaced_type.name)()'
-@[end if]
+@[end if]@

@@ -15,7 +15,11 @@
 """Tests for rosidl_generator_py.experimental helper functions."""
 
 import pytest
-
+from rosidl_generator_py.experimental import (
+    BASIC_TYPE_TO_DTYPE,
+    experimental_constraint_type,
+    experimental_msg_type,
+)
 from rosidl_parser.definition import (
     Array,
     BasicType,
@@ -23,16 +27,9 @@ from rosidl_parser.definition import (
     BoundedString,
     BoundedWString,
     NamespacedType,
-    String,
     UnboundedSequence,
     UnboundedString,
     UnboundedWString,
-)
-
-from rosidl_generator_py.experimental import (
-    BASIC_TYPE_TO_DTYPE,
-    experimental_constraint_type,
-    experimental_msg_type,
 )
 
 

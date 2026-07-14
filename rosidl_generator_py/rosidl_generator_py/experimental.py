@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Experimental code generation helpers for rosidl_generator_py.
+"""
+Experimental code generation helpers for rosidl_generator_py.
 
 These helpers map rosidl type definitions to the Python experimental
 types from ``rosidl_runtime_py.experimental``.
@@ -55,7 +56,8 @@ BASIC_TYPE_TO_DTYPE = {
 
 
 def experimental_msg_type(type_):
-    """Return the Python expression for the experimental type of a message member.
+    """
+    Return the Python expression for the experimental type of a message member.
 
     Top-level scalar BasicTypes map to ``Scalar(Dtype.X)`` constructor calls.
     Strings, arrays, and sequences map to the corresponding experimental
@@ -89,13 +91,15 @@ def _array_type(type_):
     if isinstance(vt, BasicType):
         return 'Array({}, {})'.format(BASIC_TYPE_TO_DTYPE[vt.typename], type_.size)
     if isinstance(vt, NamespacedType):
-        return 'Array({}, {}, data=[{}(_init=MessageInitialization.SKIP) for _ in range({})])'.format(
-            vt.name, type_.size, vt.name, type_.size)
+        return (
+            'Array({}, {}, data=[{}(_init=MessageInitialization.SKIP) for _ in range({})])'
+        ).format(vt.name, type_.size, vt.name, type_.size)
     # String/WString arrays use object-typed Array
     if isinstance(vt, AbstractString):
         if vt.has_maximum_size():
-            return 'Array(BoundedString, {}, data=[BoundedString({}) for _ in range({})])'.format(
-                type_.size, vt.maximum_size, type_.size)
+            return (
+                'Array(BoundedString, {}, data=[BoundedString({}) for _ in range({})])'
+            ).format(type_.size, vt.maximum_size, type_.size)
         return 'Array(String, {}, data=[String() for _ in range({})])'.format(
             type_.size, type_.size)
     if isinstance(vt, AbstractWString):
@@ -150,7 +154,8 @@ def _unbounded_sequence_type(type_):
 # ---------------------------------------------------------------------------
 
 def experimental_constraint_type(type_):
-    """Return the Python constraint type string for a member, or None if none is needed.
+    """
+    Return the Python constraint type string for a member, or None if none is needed.
 
     - BasicType (Scalar): no constraint
     - Bounded string/wstring: no constraint (bound is part of type)
@@ -190,7 +195,8 @@ def experimental_constraint_type(type_):
 # ---------------------------------------------------------------------------
 
 def _experimental_primitive_value_to_py(type_, value):
-    """Convert a rosidl value to a Python literal suitable for experimental types.
+    """
+    Convert a rosidl value to a Python literal suitable for experimental types.
 
     For experimental Scalars, bytes/octet and char types are stored as
     integers (via numpy), not as Python bytes/str objects.  This function
@@ -294,7 +300,8 @@ def experimental_submsg_members(message):
 # ---------------------------------------------------------------------------
 
 def experimental_storage_type(type_):
-    """Return the Python type annotation for an ExternalStorage member field.
+    """
+    Return the Python type annotation for an ExternalStorage member field.
 
     All fields use RawBuffer as the base descriptor type, with lists for
     arrays/sequences of complex element types:
@@ -335,20 +342,14 @@ def experimental_storage_type(type_):
 
 
 def experimental_storage_init_expr(member_name, type_):
-    """Return a Python expression to initialize a field from external storage.
+    """
+    Return a Python expression to initialize a field from external storage.
 
     For simple cases (scalars, strings, primitive arrays/sequences), returns
     a single-line constructor expression with buffer= parameter.
 
     For complex cases (arrays/sequences of strings/messages), returns None
     to signal that the template should generate custom initialization code.
-
-    Args:
-        member_name: The field name (e.g., 'my_int')
-        type_: The rosidl type definition
-
-    Returns:
-        str or None: Python constructor expression, or None for complex cases
     """
     storage_path = '_storage.members.{}'.format(member_name)
 

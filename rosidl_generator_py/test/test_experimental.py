@@ -14,13 +14,26 @@
 
 """Tests for rosidl_generator_py.experimental helper functions."""
 
+import pathlib
+import sys
+
 import pytest
-from rosidl_generator_py.experimental import (
+
+# This test imports the generator's helper module (rosidl_generator_py.
+# experimental).  When pytest runs from the package build directory (the
+# default working directory for these tests), the generated rosidl_generator_py
+# package -- which does not contain the generator helper modules -- shadows the
+# real package on sys.path.  Prepend the source package root so the generator
+# helpers resolve.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+
+from rosidl_generator_py.experimental import (  # noqa: E402
     BASIC_TYPE_TO_DTYPE,
+    experimental_builtin_shadow_names,
     experimental_constraint_type,
     experimental_msg_type,
 )
-from rosidl_parser.definition import (
+from rosidl_parser.definition import (  # noqa: E402
     Array,
     BasicType,
     BoundedSequence,
@@ -172,3 +185,25 @@ class TestExperimentalConstraintType:
     def test_unbounded_sequence_of_string_has_constraint(self):
         assert experimental_constraint_type(
             UnboundedSequence(UnboundedString())) == 'SequenceConstraint'
+
+
+# ---------------------------------------------------------------------------
+# experimental_builtin_shadow_names
+# ---------------------------------------------------------------------------
+
+class TestExperimentalBuiltinShadowNames:
+
+    def test_no_shadowing(self):
+        members = [('int32_value', 'X'), ('anything', 'Y')]
+        assert experimental_builtin_shadow_names(members) == set()
+
+    def test_builtin_member_name(self):
+        members = [('property', 'X'), ('int32_value', 'Y')]
+        assert experimental_builtin_shadow_names(members) == {'property'}
+
+    def test_multiple_builtins(self):
+        members = [('property', 'X'), ('id', 'Y')]
+        assert experimental_builtin_shadow_names(members) == {'property', 'id'}
+
+    def test_empty(self):
+        assert experimental_builtin_shadow_names([]) == set()

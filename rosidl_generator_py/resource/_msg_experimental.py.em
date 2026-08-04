@@ -2,6 +2,7 @@
 @{
 from rosidl_pycommon import convert_camel_case_to_lower_case_underscore
 from rosidl_generator_py.experimental import BASIC_TYPE_TO_DTYPE
+from rosidl_generator_py.experimental import experimental_builtin_shadow_names
 from rosidl_generator_py.experimental import experimental_constraint_type
 from rosidl_generator_py.experimental import experimental_default_value_expr
 from rosidl_generator_py.experimental import experimental_msg_type
@@ -54,7 +55,12 @@ for member in message.structure.members:
             typename = type_.name.rsplit('_', 1)[0]
         else:
             typename = type_.name
-        module_path = '.'.join(type_.namespaces) + '.experimental'
+        # Import from the concrete submodule (not the package __init__) to
+        # avoid circular imports: the package __init__ imports modules in
+        # alphabetical order, so a message with sub-message members would
+        # otherwise import from a half-initialized package.
+        module_path = '.'.join(type_.namespaces) + '.experimental._' + \
+            convert_camel_case_to_lower_case_underscore(typename)
         submsg_imports.setdefault((module_path, type_.name), []).append(member.name)
 }@
 @#>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
@@ -65,7 +71,7 @@ for member in message.structure.members:
 @[    for member_name in member_names]@
 # Member '@(member_name)'
 @[    end for]@
-from @(module_path) import @(type_name)
+from @(module_path) import @(type_name)  # noqa: E402, I100
 @[  end for]@
 @[end if]@
 
@@ -82,13 +88,20 @@ for m in message.structure.members:
     ct = experimental_constraint_type(m.type)
     if ct is not None:
         constraint_fields.append((m.name, ct))
+
+# Constraint parameters that shadow Python builtins (e.g. an IDL field named
+# property) cannot be renamed: they mirror the IDL member names and are part
+# of the keyword API, so the shadowing is silenced on the definition line
+# (same pattern as the standard generator builtins.property noqa: A003).
+constraint_params_shadow_builtin = bool(
+    experimental_builtin_shadow_names(constraint_fields))
 }@
 
 class @(message.structure.namespaced_type.name):
     """
     Experimental message class '@(message.structure.namespaced_type.name)'.
 
-    Uses experimental container types from rosidl_runtime_py.experimental.
+    Uses experimental container types from rosidl_runtime_cpython.
     """
 
 @[if message.constants]@
@@ -111,7 +124,7 @@ class @(message.structure.namespaced_type.name):
 @[for field_name, field_type in constraint_fields]@
 , @(field_name)=None@
 @[end for]@
-):
+):@[if constraint_params_shadow_builtin]  # noqa: A002@[end if]
 @[if constraint_fields]@
 @[  for field_name, field_type in constraint_fields]@
             self.@(field_name) = @(field_name) if @(field_name) is not None else @(field_type)()
@@ -138,7 +151,6 @@ class @(message.structure.namespaced_type.name):
 
         def __repr__(self):
 @[if constraint_fields]@
-            typename = type(self).__qualname__
             fields = []
 @[  for field_name, _ in constraint_fields]@
             fields.append('@(field_name)={!r}'.format(self.@(field_name)))
@@ -155,6 +167,12 @@ if not is_empty_struct:
     for m in message.structure.members:
         storage_type = experimental_storage_type(m.type)
         storage_fields.append((m.name, storage_type))
+
+# Storage field names that shadow Python builtins (e.g. an IDL field named
+# property) cannot be renamed: they mirror the IDL member names used by the
+# storage API, so the shadowing is silenced on those lines (same pattern as
+# the standard generator builtins.property noqa: A003).
+storage_fields_shadow_builtin = experimental_builtin_shadow_names(storage_fields)
 }@
     @@dataclasses.dataclass(slots=True)
     class ExternalStorage:
@@ -176,7 +194,7 @@ if not is_empty_struct:
 
 @[if storage_fields]@
 @[  for name, storage_type in storage_fields]@
-            @(name): @(storage_type) | None = None
+            @(name): @(storage_type) | None = None@[if name in storage_fields_shadow_builtin]  # noqa: A003@[end if]
 @[  end for]@
 @[else]@
             pass
@@ -302,8 +320,8 @@ is_sequence_of_msgs = is_sequence and is_msg
         for key, value in kwargs.items():
             if not hasattr(self, key):
                 raise TypeError(
-                    "@(message.structure.namespaced_type.name)() "
-                    f"got an unexpected keyword argument {key!r}")
+                    '@(message.structure.namespaced_type.name)() '
+                    f'got an unexpected keyword argument {key!r}')
             setattr(self, key, value)
 
     def _reset(self, _init=MessageInitialization.ALL):

@@ -16,7 +16,7 @@
 Experimental code generation helpers for rosidl_generator_py.
 
 These helpers map rosidl type definitions to the Python experimental
-types from ``rosidl_runtime_py.experimental``.
+types from ``rosidl_runtime_cpython``.
 """
 
 from ast import literal_eval
@@ -188,6 +188,20 @@ def experimental_constraint_type(type_):
             return None
         return 'SequenceConstraint'
     return None
+
+
+def experimental_builtin_shadow_names(members):
+    """
+    Return the set of member names that shadow Python builtins.
+
+    Constraint parameters and external-storage field names mirror the IDL
+    member names and cannot be renamed, so generated code that uses them as
+    Python identifiers must silence the resulting shadowing (flake8-builtins
+    A002/A003).  *members* is an iterable of ``(name, type)`` pairs, e.g. the
+    constraint or storage field lists built by the templates.
+    """
+    import builtins
+    return {name for name, _ in members if hasattr(builtins, name)}
 
 
 # ---------------------------------------------------------------------------

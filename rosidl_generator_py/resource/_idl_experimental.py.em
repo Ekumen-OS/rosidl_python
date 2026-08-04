@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import dataclasses
 
-from rosidl_runtime_cpython import (
+# All names are imported unconditionally; not every generated message uses
+# every container type, so unused imports are silenced (F401).
+from rosidl_runtime_cpython import (  # noqa: F401
     Array,
     BoundedSequence,
     BoundedString,

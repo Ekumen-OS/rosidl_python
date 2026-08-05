@@ -48,6 +48,20 @@ install(TARGETS _raw_buffer
 )
 
 # ---------------------------------------------------------------------------
+# Exported build interface
+# ---------------------------------------------------------------------------
+# Downstream C/C++ packages (e.g. rosidl_typesupport_xcdr_cpython) consume
+# the C API declared in include/rosidl_runtime_cpython/raw_buffer.h without
+# linking against the _raw_buffer Python module (the C API is resolved at
+# runtime via PyCapsule_Import), so exporting the include directory is
+# sufficient.
+install(
+  DIRECTORY include/
+  DESTINATION include
+)
+ament_export_include_directories(include)
+
+# ---------------------------------------------------------------------------
 # Testing
 # ---------------------------------------------------------------------------
 if(BUILD_TESTING)
@@ -61,6 +75,7 @@ if(BUILD_TESTING)
     test/rosidl_runtime_cpython/test_array.py
     test/rosidl_runtime_cpython/test_sequence.py
     test/rosidl_runtime_cpython/test_string.py
+    test/rosidl_runtime_cpython/test_copy.py
   )
   foreach(_test_path ${_pytest_tests})
     get_filename_component(_test_name ${_test_path} NAME_WE)

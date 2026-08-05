@@ -14,6 +14,7 @@
 
 """Tests for rosidl_runtime_py.experimental.string."""
 
+
 import numpy as np
 import pytest
 
@@ -533,3 +534,146 @@ class TestBoundedWString:
         s.assign('hello')
         s.append_str(' world')
         assert str(s) == 'hello world'
+
+
+# ===========================================================================
+# External (non-owning) backing — mutation must work in place within the fixed
+# capacity, and __buffer__ must expose only the logical content.
+# ===========================================================================
+
+class TestExternalBackedString:
+
+    def test_assign_within_capacity(self):
+        s = String(buffer=RawBuffer(64, growing=False))
+        assert not s._buffer.growing
+        s.assign('hello')
+        assert str(s) == 'hello'
+        assert len(s) == 5
+
+    def test_assign_over_capacity_raises(self):
+        s = String(buffer=RawBuffer(4, growing=False))
+        with pytest.raises(BufferError, match='capacity'):
+            s.assign('hello')  # 5 bytes > 4
+
+    def test_assign_shorter_replaces(self):
+        s = String(buffer=RawBuffer(16, growing=False))
+        s.assign('longer content')
+        s.assign('ab')
+        assert str(s) == 'ab'
+        assert len(s) == 2
+
+    def test_append_str_within_capacity(self):
+        s = String(buffer=RawBuffer(16, growing=False))
+        s.assign('hi')
+        s.append_str(' there')
+        assert str(s) == 'hi there'
+
+    def test_append_str_over_capacity_raises(self):
+        s = String(buffer=RawBuffer(4, growing=False))
+        s.assign('hi')
+        with pytest.raises(BufferError, match='capacity'):
+            s.append_str(' there')
+
+    def test_clear_preserves_capacity(self):
+        s = String(buffer=RawBuffer(16, growing=False))
+        s.assign('hello')
+        s.clear()
+        assert len(s) == 0
+        assert s._capacity() == 16
+        # the external buffer itself is untouched
+        assert s._buffer.size == 16
+
+    def test_append_byte(self):
+        s = String(buffer=RawBuffer(16, growing=False))
+        s.assign('AB')
+        s.append(ord('C'))
+        assert str(s) == 'ABC'
+
+    def test_insert_byte(self):
+        s = String(buffer=RawBuffer(16, growing=False))
+        s.assign('AC')
+        s.insert(1, ord('B'))
+        assert str(s) == 'ABC'
+
+    def test_delitem(self):
+        s = String(buffer=RawBuffer(16, growing=False))
+        s.assign('ABCDE')
+        del s[2]
+        assert str(s) == 'ABDE'
+
+    def test_delitem_slice(self):
+        s = String(buffer=RawBuffer(16, growing=False))
+        s.assign('ABCDE')
+        del s[1:4]
+        assert str(s) == 'AE'
+
+    def test_setitem(self):
+        s = String(buffer=RawBuffer(16, growing=False))
+        s.assign('hello')
+        s[0] = ord('H')
+        assert str(s) == 'Hello'
+
+    def test_buffer_protocol_exposes_content_not_capacity(self):
+        s = String(buffer=RawBuffer(64, growing=False))
+        s.assign('hello')
+        mv = memoryview(s)
+        assert len(mv) == 5            # content length, not the 64-byte capacity
+        assert bytes(mv) == b'hello'
+        assert s.numpy().size == 5
+
+    def test_empty_buffer_protocol(self):
+        s = String(buffer=RawBuffer(64, growing=False))
+        mv = memoryview(s)
+        assert len(mv) == 0
+
+
+class TestExternalBackedWString:
+
+    def test_assign_within_capacity(self):
+        s = WString(buffer=RawBuffer(128, growing=False))
+        s.assign('hello')
+        assert str(s) == 'hello'
+        assert len(s) == 5
+
+    def test_assign_over_capacity_raises(self):
+        s = WString(buffer=RawBuffer(4, growing=False))  # 2 code units
+        with pytest.raises(BufferError, match='capacity'):
+            s.assign('hello')  # needs 10 bytes
+
+    def test_append_str(self):
+        s = WString(buffer=RawBuffer(128, growing=False))
+        s.assign('hi')
+        s.append_str(' there')
+        assert str(s) == 'hi there'
+
+    def test_buffer_protocol_exposes_content_not_capacity(self):
+        s = WString(buffer=RawBuffer(128, growing=False))
+        s.assign('hello')
+        mv = memoryview(s)
+        assert len(mv) == 10           # 5 code units x 2 bytes, not 128
+        assert s.numpy().size == 5
+
+    def test_clear_preserves_capacity(self):
+        s = WString(buffer=RawBuffer(128, growing=False))
+        s.assign('hello')
+        s.clear()
+        assert len(s) == 0
+        assert s._capacity() == 64
+
+
+class TestExternalBackedBoundedString:
+
+    def test_bound_checked_before_capacity(self):
+        s = BoundedString(4, buffer=RawBuffer(64, growing=False))
+        with pytest.raises(ValueError, match='upper bound'):
+            s.assign('hello')  # violates the bound, capacity would allow it
+
+    def test_within_bound_and_capacity(self):
+        s = BoundedString(8, buffer=RawBuffer(64, growing=False))
+        s.assign('hello')
+        assert str(s) == 'hello'
+
+    def test_capacity_still_enforced(self):
+        s = BoundedString(8, buffer=RawBuffer(4, growing=False))
+        with pytest.raises(BufferError, match='capacity'):
+            s.assign('hello')  # within bound (5 < 8) but beyond capacity (4)

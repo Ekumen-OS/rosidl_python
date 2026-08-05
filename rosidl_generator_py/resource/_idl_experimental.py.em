@@ -24,6 +24,7 @@ from rosidl_runtime_cpython import (  # noqa: F401
     BoundedSequence,
     BoundedString,
     BoundedWString,
+    deepcopy_into,
     Dtype,
     MessageInitialization,
     RawBuffer,

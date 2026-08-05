@@ -21,8 +21,8 @@ from typing import Any, Iterator
 import numpy as np
 import numpy.typing as npt
 
-from rosidl_runtime_cpython.dtype import Dtype
 from rosidl_runtime_cpython._raw_buffer import RawBuffer
+from rosidl_runtime_cpython.dtype import Dtype
 
 
 class String:
@@ -73,7 +73,7 @@ class String:
     # ------------------------------------------------------------------
 
     def _capacity(self) -> int:
-        return self._buffer.size
+        return self._buffer.capacity
 
     def _make_view(self) -> npt.NDArray[Any]:
         if self._size == 0:
@@ -87,7 +87,7 @@ class String:
     def _ensure_capacity(self, needed_bytes: int) -> None:
         if needed_bytes <= self._capacity():
             return
-        if not self._buffer.is_owner:
+        if not self._buffer.growing:
             raise BufferError(
                 f'String capacity {self._capacity()} B exceeded for fixed '
                 f'external buffer (needed {needed_bytes} B)')
@@ -95,6 +95,18 @@ class String:
         while new_cap < needed_bytes:
             new_cap *= 2
         self._buffer.reserve(new_cap)
+
+    def _resize_buffer(self, nbytes: int) -> None:
+        """
+        Set the backing buffer's logical size.
+
+        External (non-owning) buffers cannot be resized — their capacity is
+        fixed and the string tracks its own logical size — so this is a no-op
+        for them.  Callers must ensure *nbytes* <= capacity (via
+        :meth:`_ensure_capacity`).
+        """
+        if self._buffer.growing:
+            self._buffer.resize(nbytes)
 
     # ------------------------------------------------------------------
     # Properties
@@ -117,18 +129,19 @@ class String:
         ----------
         s : str or bytes
             Source text.  ``str`` is encoded with ``'utf-8'``; ``bytes``
-            are used directly.
+            (or any buffer-protocol object) are copied directly without an
+            intermediate ``bytes`` materialisation.
         """
         if isinstance(s, str):
             data = s.encode('utf-8')
         elif isinstance(s, (bytes, bytearray, memoryview)):
-            data = bytes(s)
+            data = s
         else:
             raise TypeError(f'assign requires str or bytes, got {type(s).__name__}')
         n = len(data)
         self._check_bound(n)
         self._ensure_capacity(n)
-        self._buffer.resize(n)
+        self._resize_buffer(n)
         self._size = n
         self._refresh_view()
         if n:
@@ -145,7 +158,7 @@ class String:
         if isinstance(s, str):
             data = s.encode('utf-8')
         elif isinstance(s, (bytes, bytearray, memoryview)):
-            data = bytes(s)
+            data = s
         else:
             raise TypeError(
                 f'append_str requires str or bytes, got {type(s).__name__}')
@@ -153,7 +166,7 @@ class String:
         new_size = self._size + n
         self._check_bound(new_size)
         self._ensure_capacity(new_size)
-        self._buffer.resize(new_size)
+        self._resize_buffer(new_size)
         prev_size = self._size
         self._size = new_size
         self._refresh_view()
@@ -200,7 +213,7 @@ class String:
                 keep[i] = False
             new_arr = arr[keep]
         n = len(new_arr)
-        self._buffer.resize(n)
+        self._resize_buffer(n)
         self._size = n
         self._refresh_view()
         if n:
@@ -233,7 +246,7 @@ class String:
         """Append a single byte value (int 0–255)."""
         self._check_bound(self._size + 1)
         self._ensure_capacity(self._size + 1)
-        self._buffer.resize(self._size + 1)
+        self._resize_buffer(self._size + 1)
         self._size += 1
         self._refresh_view()
         self._view[self._size - 1] = byte_value
@@ -250,14 +263,14 @@ class String:
         self._ensure_capacity(self._size + 1)
         new_arr = np.concatenate([arr[:index], [byte_value], arr[index:]])
         n = len(new_arr)
-        self._buffer.resize(n)
+        self._resize_buffer(n)
         self._size = n
         self._refresh_view()
         self._view[:] = new_arr
 
     def clear(self) -> None:
         """Remove all bytes (buffer capacity is preserved)."""
-        self._buffer.resize(0)
+        self._resize_buffer(0)
         self._size = 0
         self._refresh_view()
 
@@ -276,8 +289,14 @@ class String:
     # ------------------------------------------------------------------
 
     def __buffer__(self, flags: int) -> memoryview:
-        """PEP 688: writable buffer over the live bytes."""
-        return memoryview(self._buffer)
+        """
+        PEP 688: writable buffer over the live bytes.
+
+        Only the logical content is exposed (``_size`` bytes), never the
+        underlying capacity — for external (non-owning) buffers the capacity
+        may exceed the content length.
+        """
+        return memoryview(self._buffer)[:self._size]
 
     def numpy(self) -> npt.NDArray[np.uint8]:
         """Return a 1-D uint8 numpy array over the live bytes."""
@@ -330,13 +349,13 @@ class WString:
     # ------------------------------------------------------------------
 
     def _capacity(self) -> int:
-        return self._buffer.size // self._ITEMSIZE
+        return self._buffer.capacity // self._ITEMSIZE
 
     def _ensure_capacity(self, needed_units: int) -> None:
         needed_bytes = needed_units * self._ITEMSIZE
-        if needed_bytes <= self._buffer.size:
+        if needed_bytes <= self._buffer.capacity:
             return
-        if not self._buffer.is_owner:
+        if not self._buffer.growing:
             raise BufferError(
                 f'WString capacity {self._capacity()} code units exceeded for '
                 f'fixed external buffer (needed {needed_units})')
@@ -344,6 +363,18 @@ class WString:
         while new_cap < needed_units:
             new_cap *= 2
         self._buffer.reserve(new_cap * self._ITEMSIZE)
+
+    def _resize_buffer(self, nbytes: int) -> None:
+        """
+        Set the backing buffer's logical size.
+
+        External (non-owning) buffers cannot be resized — their capacity is
+        fixed and the string tracks its own logical size — so this is a no-op
+        for them.  Callers must ensure *nbytes* <= capacity (via
+        :meth:`_ensure_capacity`).
+        """
+        if self._buffer.growing:
+            self._buffer.resize(nbytes)
 
     def _make_view(self) -> npt.NDArray[Any]:
         if self._size == 0:
@@ -380,7 +411,7 @@ class WString:
         if isinstance(s, str):
             data = s.encode('utf-16-le')
         elif isinstance(s, (bytes, bytearray, memoryview)):
-            data = bytes(s)
+            data = s
             if len(data) % 2 != 0:
                 raise ValueError('bytes for WString must have even length')
         else:
@@ -390,7 +421,7 @@ class WString:
         self._check_bound(n_units)
         n_bytes = len(data)
         self._ensure_capacity(n_units)
-        self._buffer.resize(n_bytes)
+        self._resize_buffer(n_bytes)
         self._size = n_units
         self._refresh_view()
         if n_bytes:
@@ -407,7 +438,7 @@ class WString:
         if isinstance(s, str):
             data = s.encode('utf-16-le')
         elif isinstance(s, (bytes, bytearray, memoryview)):
-            data = bytes(s)
+            data = s
             if len(data) % 2 != 0:
                 raise ValueError('bytes for WString must have even length')
         else:
@@ -418,7 +449,7 @@ class WString:
         self._ensure_capacity(self._size + n_units)
         old_bytes = self._size * self._ITEMSIZE
         new_bytes = old_bytes + len(data)
-        self._buffer.resize(new_bytes)
+        self._resize_buffer(new_bytes)
         old_size = self._size
         self._size += n_units
         self._refresh_view()
@@ -465,7 +496,7 @@ class WString:
                 keep[i] = False
             new_arr = arr[keep]
         n = len(new_arr)
-        self._buffer.resize(n * self._ITEMSIZE)
+        self._resize_buffer(n * self._ITEMSIZE)
         self._size = n
         self._refresh_view()
         if n:
@@ -499,7 +530,7 @@ class WString:
         self._check_bound(self._size + 1)
         self._ensure_capacity(self._size + 1)
         n_bytes = (self._size + 1) * self._ITEMSIZE
-        self._buffer.resize(n_bytes)
+        self._resize_buffer(n_bytes)
         self._size += 1
         self._refresh_view()
         self._view[self._size - 1] = unit_value
@@ -515,14 +546,14 @@ class WString:
         self._check_bound(self._size + 1)
         self._ensure_capacity(self._size + 1)
         new_arr = np.concatenate([arr[:index], [unit_value], arr[index:]])
-        self._buffer.resize(len(new_arr) * self._ITEMSIZE)
+        self._resize_buffer(len(new_arr) * self._ITEMSIZE)
         self._size = len(new_arr)
         self._refresh_view()
         self._view[:] = new_arr.astype(self._DTYPE.numpy_dtype)
 
     def clear(self) -> None:
         """Remove all code units (buffer capacity is preserved)."""
-        self._buffer.resize(0)
+        self._resize_buffer(0)
         self._size = 0
         self._refresh_view()
 
@@ -541,8 +572,14 @@ class WString:
     # ------------------------------------------------------------------
 
     def __buffer__(self, flags: int) -> memoryview:
-        """PEP 688: writable buffer over the live bytes."""
-        return memoryview(self._buffer)
+        """
+        PEP 688: writable buffer over the live code units.
+
+        Only the logical content is exposed (``_size * _ITEMSIZE`` bytes),
+        never the underlying capacity — for external (non-owning) buffers the
+        capacity may exceed the content length.
+        """
+        return memoryview(self._buffer)[:self._size * self._ITEMSIZE]
 
     def numpy(self) -> npt.NDArray[np.uint16]:
         """Return a 1-D uint16 numpy array over the live code units."""

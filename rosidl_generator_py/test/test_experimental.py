@@ -32,6 +32,8 @@ from rosidl_generator_py.experimental import (  # noqa: E402
     experimental_builtin_shadow_names,
     experimental_constraint_type,
     experimental_msg_type,
+    experimental_msg_type_with_element_pool,
+    experimental_zero_value_expr,
 )
 from rosidl_parser.definition import (  # noqa: E402
     Array,
@@ -39,6 +41,7 @@ from rosidl_parser.definition import (  # noqa: E402
     BoundedSequence,
     BoundedString,
     BoundedWString,
+    Member,
     NamespacedType,
     UnboundedSequence,
     UnboundedString,
@@ -207,3 +210,95 @@ class TestExperimentalBuiltinShadowNames:
 
     def test_empty(self):
         assert experimental_builtin_shadow_names([]) == set()
+
+
+# ---------------------------------------------------------------------------
+# experimental_msg_type_with_element_pool
+# ---------------------------------------------------------------------------
+
+class TestExperimentalMsgTypeWithElementPool:
+
+    def test_unbounded_string_sequence(self):
+        assert experimental_msg_type_with_element_pool(
+            UnboundedSequence(UnboundedString()),
+            'String(buffer=buf)', '_storage.members.foo') == (
+            'Sequence(String, element_pool=([String(buffer=buf) for buf in '
+            '_storage.members.foo] if _storage.members.foo is not None else None))')
+
+    def test_bounded_string_sequence(self):
+        assert experimental_msg_type_with_element_pool(
+            BoundedSequence(BoundedString(10), 8),
+            'BoundedString(10, buffer=buf)', '_storage.members.foo') == (
+            'BoundedSequence(BoundedString, 8, element_pool=('
+            '[BoundedString(10, buffer=buf) for buf in _storage.members.foo] '
+            'if _storage.members.foo is not None else None))')
+
+    def test_message_sequence(self):
+        sub = NamespacedType(['pkg', 'msg'], 'Sub')
+        assert experimental_msg_type_with_element_pool(
+            UnboundedSequence(sub),
+            'Sub(_storage=buf, _init=MessageInitialization.SKIP)',
+            '_storage.members.foo') == (
+            'Sequence(Sub, element_pool=([Sub(_storage=buf, '
+            '_init=MessageInitialization.SKIP) for buf in _storage.members.foo] '
+            'if _storage.members.foo is not None else None))')
+
+
+# ---------------------------------------------------------------------------
+# experimental_zero_value_expr
+# ---------------------------------------------------------------------------
+
+class TestExperimentalZeroValueExpr:
+
+    def test_scalar_zero(self):
+        assert experimental_zero_value_expr(
+            Member(BasicType('int32'), 'x')) == ['self.x.value = 0']
+
+    def test_boolean_zero(self):
+        assert experimental_zero_value_expr(
+            Member(BasicType('boolean'), 'b')) == ['self.b.value = False']
+
+    def test_float_zero(self):
+        assert experimental_zero_value_expr(
+            Member(BasicType('double'), 'f')) == ['self.f.value = 0.0']
+
+    def test_string_zero(self):
+        assert experimental_zero_value_expr(
+            Member(UnboundedString(), 's')) == ["self.s.assign('')"]
+
+    def test_bounded_string_zero(self):
+        assert experimental_zero_value_expr(
+            Member(BoundedString(10), 's')) == ["self.s.assign('')"]
+
+    def test_wstring_zero(self):
+        assert experimental_zero_value_expr(
+            Member(UnboundedWString(), 'w')) == ["self.w.assign('')"]
+
+    def test_primitive_array_zero(self):
+        assert experimental_zero_value_expr(
+            Member(Array(BasicType('int32'), 4), 'a')) == \
+            ['self.a[:] = [0] * 4']
+
+    def test_string_array_zero(self):
+        assert experimental_zero_value_expr(
+            Member(Array(UnboundedString(), 2), 'a')) == \
+            ['for _e in self.a[:]:', "    _e.assign('')"]
+
+    def test_sequence_zero(self):
+        assert experimental_zero_value_expr(
+            Member(UnboundedSequence(UnboundedString()), 'seq')) == \
+            ['self.seq.clear()']
+
+    def test_nested_message_none(self):
+        assert experimental_zero_value_expr(
+            Member(NamespacedType(['pkg', 'msg'], 'Sub'), 'sub')) is None
+
+    def test_message_array_none(self):
+        assert experimental_zero_value_expr(
+            Member(Array(NamespacedType(['pkg', 'msg'], 'Sub'), 2), 'subs')) \
+            is None
+
+    def test_message_sequence_zero(self):
+        assert experimental_zero_value_expr(
+            Member(UnboundedSequence(NamespacedType(['pkg', 'msg'], 'Sub')),
+                   'subs')) == ['self.subs.clear()']

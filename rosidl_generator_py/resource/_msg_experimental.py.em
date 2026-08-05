@@ -6,9 +6,11 @@ from rosidl_generator_py.experimental import experimental_builtin_shadow_names
 from rosidl_generator_py.experimental import experimental_constraint_type
 from rosidl_generator_py.experimental import experimental_default_value_expr
 from rosidl_generator_py.experimental import experimental_msg_type
+from rosidl_generator_py.experimental import experimental_msg_type_with_element_pool
 from rosidl_generator_py.experimental import experimental_storage_init_expr
 from rosidl_generator_py.experimental import experimental_storage_type
 from rosidl_generator_py.experimental import experimental_submsg_members
+from rosidl_generator_py.experimental import experimental_zero_value_expr
 from rosidl_generator_py.generate_py_impl import constant_value_to_py
 from rosidl_parser.definition import AbstractGenericString
 from rosidl_parser.definition import AbstractNestedType
@@ -226,7 +228,7 @@ storage_fields_shadow_builtin = experimental_builtin_shadow_names(storage_fields
     ):
         if _storage is not None:
             # Store reference to keep storage descriptors alive
-            self._external_storage = _storage
+            object.__setattr__(self, '_external_storage', _storage)
             # Initialize from external storage
 @[if not is_empty_struct]@
 @[  for member in message.structure.members]@
@@ -250,12 +252,30 @@ is_array_of_strings = is_array and is_string
 is_sequence_of_strings = is_sequence and is_string
 is_array_of_msgs = is_array and is_msg
 is_sequence_of_msgs = is_sequence and is_msg
+# External element-pool constructor for sequences of strings/messages.
+# The pool (one pre-constructed container per external buffer) fixes the
+# capacity; the sequence starts empty and mutations write into pool slots.
+if is_sequence_of_strings:
+    if is_bounded_wstring:
+        elem_ctor = 'BoundedWString({}, buffer=buf)'.format(vt.maximum_size)
+    elif is_unbounded_wstring:
+        elem_ctor = 'WString(buffer=buf)'
+    elif is_bounded_regular_string:
+        elem_ctor = 'BoundedString({}, buffer=buf)'.format(vt.maximum_size)
+    else:
+        elem_ctor = 'String(buffer=buf)'
+    seq_ctor = experimental_msg_type_with_element_pool(
+        member.type, elem_ctor, '_storage.members.{}'.format(member.name))
+elif is_sequence_of_msgs:
+    elem_ctor = '{}(_storage=buf, _init=MessageInitialization.SKIP)'.format(vt.name)
+    seq_ctor = experimental_msg_type_with_element_pool(
+        member.type, elem_ctor, '_storage.members.{}'.format(member.name))
 }@
 @[  if init_expr]@
-            self.@(member.name) = @(init_expr)
+            object.__setattr__(self, '@(member.name)', @(init_expr))
 @[  elif is_array_of_strings]@
             # Array of strings from list[RawBuffer]
-            self.@(member.name) = @(experimental_msg_type(member.type))
+            object.__setattr__(self, '@(member.name)', @(experimental_msg_type(member.type)))
             storage_bufs = _storage.members.@(member.name)
             if storage_bufs is not None:
                 assert isinstance(storage_bufs, list) and len(storage_bufs) == @(member.type.size)
@@ -270,49 +290,31 @@ is_sequence_of_msgs = is_sequence and is_msg
                     self.@(member.name)[i] = String(buffer=buf)
 @[    end if]@
 @[  elif is_sequence_of_strings]@
-            # Sequence of strings from list[RawBuffer]
-            self.@(member.name) = @(experimental_msg_type(member.type))
-            storage_bufs = _storage.members.@(member.name)
-            if storage_bufs is not None:
-                assert isinstance(storage_bufs, list)
-                for buf in storage_bufs:
-@[    if is_bounded_wstring]@
-                    self.@(member.name).append(BoundedWString(@(vt.maximum_size), buffer=buf))
-@[    elif is_unbounded_wstring]@
-                    self.@(member.name).append(WString(buffer=buf))
-@[    elif is_bounded_regular_string]@
-                    self.@(member.name).append(BoundedString(@(vt.maximum_size), buffer=buf))
-@[    else]@
-                    self.@(member.name).append(String(buffer=buf))
-@[    end if]@
+            # Sequence of strings from list[RawBuffer] — external element pool
+            object.__setattr__(self, '@(member.name)', @(seq_ctor))
 @[  elif is_array_of_msgs]@
             # Array of messages from list[SubMsg.ExternalStorage]
-            self.@(member.name) = @(experimental_msg_type(member.type))
+            object.__setattr__(self, '@(member.name)', @(experimental_msg_type(member.type)))
             storage_msgs = _storage.members.@(member.name)
             if storage_msgs is not None:
                 assert isinstance(storage_msgs, list) and len(storage_msgs) == @(member.type.size)
                 for i, msg_storage in enumerate(storage_msgs):
                     self.@(member.name)[i] = @(vt.name)(_storage=msg_storage, _init=MessageInitialization.SKIP)
 @[  elif is_sequence_of_msgs]@
-            # Sequence of messages from list[SubMsg.ExternalStorage]
-            self.@(member.name) = @(experimental_msg_type(member.type))
-            storage_msgs = _storage.members.@(member.name)
-            if storage_msgs is not None:
-                assert isinstance(storage_msgs, list)
-                for msg_storage in storage_msgs:
-                    self.@(member.name).append(@(vt.name)(_storage=msg_storage, _init=MessageInitialization.SKIP))
+            # Sequence of messages from list[SubMsg.ExternalStorage] — external element pool
+            object.__setattr__(self, '@(member.name)', @(seq_ctor))
 @[  else]@
             # Fallback - shouldn't reach here for known types
-            self.@(member.name) = @(experimental_msg_type(member.type))
+            object.__setattr__(self, '@(member.name)', @(experimental_msg_type(member.type)))
 @[  end if]@
 @[  end for]@
 @[end if]@
         else:
-            self._external_storage = None
+            object.__setattr__(self, '_external_storage', None)
             # Managed storage (default behavior)
 @[if not is_empty_struct]@
 @[  for member in message.structure.members]@
-            self.@(member.name) = @(experimental_msg_type(member.type))
+            object.__setattr__(self, '@(member.name)', @(experimental_msg_type(member.type)))
 @[  end for]@
 @[end if]@
         self._reset(_init)
@@ -333,24 +335,41 @@ for member in message.structure.members:
     dval = experimental_default_value_expr(member)
     if dval is not None:
         default_members.append((member, dval))
+    zval = experimental_zero_value_expr(member)
+    if zval is not None:
+        zero_members.append((member, zval))
 submsg_list = list(experimental_submsg_members(message))
 }@
-@[if not default_members and not submsg_list]@
+@[if not default_members and not zero_members and not submsg_list]@
         pass
 @[else]@
-@[  if default_members]@
+@[  if default_members or zero_members]@
         if _init == MessageInitialization.ALL:
-@[    for member, lines in default_members]@
-@[      for line in lines]@
+@[    if default_members]@
+@[      for member, lines in default_members]@
+@[        for line in lines]@
             @(line)
+@[        end for]@
 @[      end for]@
-@[    end for]@
+@[    else]@
+            pass
+@[    end if]@
+@[    if zero_members]@
+        elif _init == MessageInitialization.ZERO:
+@[      for member, lines in zero_members]@
+@[        for line in lines]@
+            @(line)
+@[        end for]@
+@[      end for]@
+@[    end if]@
+@[    if default_members]@
         elif _init == MessageInitialization.DEFAULTS_ONLY:
-@[    for member, lines in default_members]@
-@[      for line in lines]@
+@[      for member, lines in default_members]@
+@[        for line in lines]@
             @(line)
+@[        end for]@
 @[      end for]@
-@[    end for]@
+@[    end if]@
 @[  end if]@
 @[  if submsg_list]@
         # Propagate _init to sub-message members
@@ -364,6 +383,68 @@ submsg_list = list(experimental_submsg_members(message))
 @[    end for]@
 @[  end if]@
 @[end if]@
+
+    def clear(self):
+        """
+        Reset all members to their default (zero/empty) values, in place.
+
+        Equivalent to ``_reset(MessageInitialization.ZERO)``.  Pool-backed
+        sequences call this on elements that drop out of the logical range
+        (shrink/clear) so a later grow never exposes stale content — the
+        Python analog of the C++ element destructor.
+        """
+        self._reset(MessageInitialization.ZERO)
+
+    def __setattr__(self, name, value):
+        """
+        Assign to a field with container-aware semantics.
+
+        * Pythonic values (int/float/bool/str/bytes/list/...) are written
+          into the existing container (``Scalar.value``, ``String.assign``,
+          ``Sequence.assign``, ...).
+        * Container/message values must match the field's type exactly.
+          If this message is backed by external storage the source data is
+          deep-copied *into* the receiver's existing containers (their
+          identity is fixed); otherwise the field is rebound to the value
+          (shallow reference assignment).
+        """
+        if name == '_external_storage':
+            object.__setattr__(self, name, value)
+            return
+        # All member slots are initialized in __init__ via object.__setattr__,
+        # so by the time user code assigns, `current` always exists.
+        current = object.__getattribute__(self, name)
+        if isinstance(current, (Scalar, String, WString, Array, Sequence)):
+            if isinstance(value, (Scalar, String, WString, Array, Sequence)):
+                if type(value) is type(current):
+                    if self._external_storage is not None:
+                        deepcopy_into(current, value)
+                    else:
+                        object.__setattr__(self, name, value)
+                    return
+                raise TypeError(
+                    '@(message.structure.namespaced_type.name).%s: cannot assign '
+                    '%s to %s' % (name, type(value).__name__, type(current).__name__))
+            if isinstance(current, Scalar):
+                current.value = value
+            elif isinstance(current, (String, WString)):
+                current.assign(value)
+            elif isinstance(current, Array):
+                current[:] = value
+            else:  # Sequence
+                current.assign(value)
+            return
+        if type(value) is type(current):
+            # Message field: deep in-place copy for external storage,
+            # shallow reference assignment otherwise.
+            if self._external_storage is not None:
+                deepcopy_into(current, value)
+            else:
+                object.__setattr__(self, name, value)
+            return
+        raise TypeError(
+            '@(message.structure.namespaced_type.name).%s: cannot assign '
+            '%s to %s' % (name, type(value).__name__, type(current).__name__))
 
     def __eq__(self, other):
         if not isinstance(other, @(message.structure.namespaced_type.name)):

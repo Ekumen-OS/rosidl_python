@@ -14,12 +14,14 @@
 
 """Tests for rosidl_runtime_py.experimental.sequence."""
 
+
 import numpy as np
 import pytest
 
 from rosidl_runtime_cpython._raw_buffer import RawBuffer
 from rosidl_runtime_cpython.dtype import Dtype
 from rosidl_runtime_cpython.sequence import BoundedSequence, Sequence
+from rosidl_runtime_cpython.string import BoundedString, String
 
 
 # ---------------------------------------------------------------------------
@@ -501,3 +503,327 @@ def test_repr_bounded():
     r = repr(s)
     assert 'BoundedSequence' in r
     assert '10' in r
+
+
+# ---------------------------------------------------------------------------
+# Primitive mode — external (non-owning) buffer
+# ---------------------------------------------------------------------------
+
+def test_primitive_external_append_within_capacity():
+    s = Sequence(Dtype.INT32, buffer=RawBuffer(8 * 4, growing=False))  # capacity 8
+    assert not s._buffer.growing
+    s.append(1)
+    s.append(2)
+    assert list(s) == [1, 2]
+
+
+def test_primitive_external_append_over_capacity_raises():
+    s = Sequence(Dtype.INT32, buffer=RawBuffer(16, growing=False))  # capacity 4
+    s.extend([1, 2, 3, 4])
+    with pytest.raises(BufferError, match='capacity'):
+        s.append(5)
+
+
+def test_primitive_external_assign_over_capacity_raises():
+    s = Sequence(Dtype.INT32, buffer=RawBuffer(16, growing=False))  # capacity 4
+    with pytest.raises(BufferError, match='capacity'):
+        s.assign([1, 2, 3, 4, 5])
+
+
+def test_primitive_external_buffer_protocol_content_length():
+    s = Sequence(Dtype.INT32, buffer=RawBuffer(32, growing=False))
+    s.append(7)
+    mv = memoryview(s)
+    assert len(mv) == 4  # one int32, not the 32-byte capacity
+
+
+# ---------------------------------------------------------------------------
+# Object mode — external element pool
+# ---------------------------------------------------------------------------
+
+def make_string_pool(n, capacity=16):
+    return [String(buffer=RawBuffer(capacity, growing=False)) for _ in range(n)]
+
+
+def test_pool_capacity_equals_pool_length():
+    pool = make_string_pool(3)
+    s = Sequence(String, element_pool=pool)
+    assert s.capacity == 3
+    assert len(s) == 0
+
+
+def test_pool_bad_type_raises():
+    with pytest.raises(TypeError, match='element_pool must be a list'):
+        Sequence(String, element_pool=(String(),))  # tuple, not list
+
+
+def test_pool_element_type_mismatch_raises():
+    with pytest.raises(TypeError, match='element_pool entries'):
+        Sequence(String, element_pool=['not a string'])
+
+
+def test_pool_append_preserves_identity():
+    pool = make_string_pool(3)
+    s = Sequence(String, element_pool=pool)
+    s.append('hello')
+    assert s[0] is pool[0]
+    assert str(s[0]) == 'hello'
+    assert str(pool[0]) == 'hello'
+
+
+def test_pool_append_overflow_raises():
+    pool = make_string_pool(2)
+    s = Sequence(String, element_pool=pool)
+    s.append('a')
+    s.append('b')
+    with pytest.raises(BufferError, match='capacity'):
+        s.append('c')
+
+
+def test_pool_assign_deep_copies_into_pool():
+    pool = make_string_pool(3)
+    s = Sequence(String, element_pool=pool)
+    s.assign(['hello', 'world'])
+    assert len(s) == 2
+    assert s[0] is pool[0]
+    assert str(s[0]) == 'hello'
+    assert str(s[1]) == 'world'
+
+
+def test_pool_assign_clears_excess():
+    pool = make_string_pool(3)
+    s = Sequence(String, element_pool=pool)
+    s.assign(['a', 'b', 'c'])
+    s.assign(['x'])
+    assert len(s) == 1
+    assert str(s[0]) == 'x'
+    assert len(pool[1]) == 0
+    assert len(pool[2]) == 0
+
+
+def test_pool_assign_overflow_raises():
+    pool = make_string_pool(2)
+    s = Sequence(String, element_pool=pool)
+    with pytest.raises(BufferError, match='capacity'):
+        s.assign(['a', 'b', 'c'])
+
+
+def test_pool_resize_grow_then_shrink():
+    pool = make_string_pool(3)
+    s = Sequence(String, element_pool=pool)
+    s.resize(2)
+    assert len(s) == 2
+    s.resize(3)
+    assert len(s) == 3
+    s.resize(1)
+    assert len(s) == 1
+    assert len(pool[1]) == 0
+    assert len(pool[2]) == 0
+
+
+def test_pool_resize_overflow_raises():
+    pool = make_string_pool(2)
+    s = Sequence(String, element_pool=pool)
+    with pytest.raises(BufferError, match='capacity'):
+        s.resize(3)
+
+
+def test_pool_extend():
+    pool = make_string_pool(3)
+    s = Sequence(String, element_pool=pool)
+    s.extend(['a', 'b'])
+    assert list(s) == ['a', 'b']
+    assert s[0] is pool[0]
+
+
+def test_pool_insert_shifts_content():
+    pool = make_string_pool(3)
+    s = Sequence(String, element_pool=pool)
+    s.assign(['a', 'c'])
+    s.insert(1, 'b')
+    assert list(s) == ['a', 'b', 'c']
+    assert s[0] is pool[0]
+    assert s[1] is pool[1]
+    assert s[2] is pool[2]
+    assert str(s[1]) == 'b'
+
+
+def test_pool_setitem_copies_into_pool_element():
+    pool = make_string_pool(2)
+    s = Sequence(String, element_pool=pool)
+    s.assign(['hello', 'world'])
+    s[0] = 'goodbye'
+    assert s[0] is pool[0]
+    assert str(s[0]) == 'goodbye'
+    assert str(s[1]) == 'world'
+
+
+def test_pool_setitem_slice():
+    pool = make_string_pool(3)
+    s = Sequence(String, element_pool=pool)
+    s.assign(['a', 'b', 'c'])
+    s[0:2] = ['x', 'y']
+    assert list(s) == ['x', 'y', 'c']
+    assert s[0] is pool[0]
+
+
+def test_pool_setitem_slice_length_mismatch_raises():
+    pool = make_string_pool(3)
+    s = Sequence(String, element_pool=pool)
+    s.assign(['a', 'b', 'c'])
+    with pytest.raises(ValueError, match='slice'):
+        s[0:2] = ['x']
+
+
+def test_pool_setitem_type_mismatch_raises():
+    pool = make_string_pool(2)
+    s = Sequence(String, element_pool=pool)
+    s.assign(['a', 'b'])
+    with pytest.raises(TypeError, match='cannot assign'):
+        s[0] = 42
+
+
+def test_pool_delitem_shifts_content():
+    pool = make_string_pool(3)
+    s = Sequence(String, element_pool=pool)
+    s.assign(['a', 'b', 'c'])
+    del s[1]
+    assert list(s) == ['a', 'c']
+    assert s[0] is pool[0]
+    assert s[1] is pool[1]
+    assert len(pool[2]) == 0
+
+
+def test_pool_delitem_slice():
+    pool = make_string_pool(5)
+    s = Sequence(String, element_pool=pool)
+    s.assign(['a', 'b', 'c', 'd', 'e'])
+    del s[1:3]
+    assert list(s) == ['a', 'd', 'e']
+    assert s[0] is pool[0]
+    assert s[1] is pool[1]
+    assert s[2] is pool[2]
+    assert len(pool[3]) == 0
+    assert len(pool[4]) == 0
+
+
+def test_pool_clear_preserves_capacity():
+    pool = make_string_pool(3)
+    s = Sequence(String, element_pool=pool)
+    s.assign(['a', 'b', 'c'])
+    s.clear()
+    assert len(s) == 0
+    assert s.capacity == 3
+    assert len(pool[0]) == 0
+
+
+def test_pool_identity_after_multiple_mutations():
+    pool = make_string_pool(3)
+    s = Sequence(String, element_pool=pool)
+    s.assign(['a', 'b', 'c'])
+    s[0] = 'x'
+    del s[2]
+    assert s[0] is pool[0]
+    assert s[1] is pool[1]
+    assert str(s[0]) == 'x'
+
+
+def test_pool_bounded_sequence_bound_checked_first():
+    pool = make_string_pool(4)
+    s = BoundedSequence(String, 2, element_pool=pool)
+    s.append('a')
+    s.append('b')
+    with pytest.raises(ValueError, match='upper bound'):
+        s.append('c')  # bound (2) fails before pool capacity (4)
+
+
+def test_pool_bounded_sequence_pool_capacity_after_bound():
+    pool = make_string_pool(2)
+    s = BoundedSequence(String, 4, element_pool=pool)
+    s.append('a')
+    s.append('b')
+    with pytest.raises(BufferError, match='capacity'):
+        s.append('c')  # bound allows 4, pool only holds 2
+
+
+def test_pool_bounded_string_elements():
+    pool = [BoundedString(10, buffer=RawBuffer(16, growing=False)) for _ in range(2)]
+    s = Sequence(BoundedString, element_pool=pool)
+    s.append('hello')
+    assert s[0] is pool[0]
+    assert str(s[0]) == 'hello'
+    with pytest.raises(ValueError, match='upper bound'):
+        s.append('x' * 11)
+
+
+def test_pool_bytes_assignment():
+    pool = make_string_pool(2)
+    s = Sequence(String, element_pool=pool)
+    s.resize(2)                       # resize-then-mutate pattern
+    s[0:2] = [b'abc', b'def']
+    assert str(s[0]) == 'abc'
+    assert str(s[1]) == 'def'
+
+
+def test_pool_pop_returns_deep_copy():
+    pool = make_string_pool(3)
+    s = Sequence(String, element_pool=pool)
+    s.assign(['a', 'b', 'c'])
+    v = s.pop()                       # last element
+    assert str(v) == 'c'
+    assert v is not pool[2]           # fresh managed copy, not the pool elem
+    assert len(s) == 2
+    assert len(pool[2]) == 0          # pool slot cleared by the delete
+    v0 = s.pop(0)                     # first element (content-shift path)
+    assert str(v0) == 'a'
+    assert len(s) == 1
+    assert str(s[0]) == 'b'
+
+
+def test_pool_numpy_view_is_read_only():
+    pool = make_string_pool(2)
+    s = Sequence(String, element_pool=pool)
+    s.assign(['a', 'b'])
+    arr = s.numpy()
+    with pytest.raises(ValueError, match='read-only'):
+        arr[0] = 'x'                  # must not rebind a pool slot
+    assert s[0] is pool[0]
+    assert str(s[0]) == 'a'
+
+
+def test_pool_numpy_view_reflects_live_content():
+    pool = make_string_pool(2)
+    s = Sequence(String, element_pool=pool)
+    s.assign(['a', 'b'])
+    arr = s.numpy()
+    assert arr[0] is pool[0]
+    assert list(arr) == s[:]
+
+
+def test_empty_pool_falls_back_to_managed():
+    s = Sequence(String, element_pool=[])
+    assert s._element_pool is None
+    assert s.capacity == 0
+    s.append('managed')               # unbounded: append succeeds
+    assert list(s) == ['managed']
+
+
+def test_pool_resize_grow_cleared_then_reassigned():
+    # Shrink must clear pool slots so a later grow never exposes stale data.
+    pool = make_string_pool(3)
+    s = Sequence(String, element_pool=pool)
+    s.assign(['a', 'b', 'c'])
+    s.resize(1)
+    assert len(pool[1]) == 0
+    assert len(pool[2]) == 0
+    s.resize(3)
+    assert str(s[0]) == 'a'
+    assert str(s[1]) == ''
+    assert str(s[2]) == ''
+
+
+def test_pool_primitive_external_resize_zero_fills_new_slots():
+    s = Sequence(Dtype.INT32, buffer=RawBuffer(4 * 4, growing=False))  # capacity 4
+    s.assign([1, 2])
+    s.resize(4)                       # grow on non-owning buffer
+    assert list(s) == [1, 2, 0, 0]

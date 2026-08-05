@@ -149,6 +149,33 @@ def _unbounded_sequence_type(type_):
     assert False, 'unknown sequence element type: {}'.format(vt)
 
 
+def experimental_msg_type_with_element_pool(type_, element_expr, storage_expr):
+    """
+    Return a constructor expression for a sequence with an external element pool.
+
+    ``element_expr`` is the per-slot element constructor (may reference the
+    loop variable ``buf``).  ``storage_expr`` is the Python expression for the
+    storage list; it may evaluate to None at runtime, in which case the pool
+    falls back to None (managed storage) — the guard is generated here.
+
+    Example: a ``string[]`` member ``foo`` with storage
+    ``_storage.members.foo`` produces::
+
+        Sequence(String, element_pool=(
+            [String(buffer=buf) for buf in _storage.members.foo]
+            if _storage.members.foo is not None else None))
+    """
+    base = experimental_msg_type(type_)
+    if not base.endswith(')'):
+        raise ValueError(
+            'expected a constructor expression, got {!r}'.format(base))
+    pool_expr = '[{element} for buf in {storage}]'.format(
+        element=element_expr, storage=storage_expr)
+    guarded_pool = '({pool} if {storage} is not None else None)'.format(
+        pool=pool_expr, storage=storage_expr)
+    return base[:-1] + ', element_pool={})'.format(guarded_pool)
+
+
 # ---------------------------------------------------------------------------
 # Constraint type for a member
 # ---------------------------------------------------------------------------
@@ -261,27 +288,52 @@ def experimental_default_value_expr(member):
 
 
 def experimental_zero_value_expr(member):
-    """Return Python expression to zero-init *member*, or None."""
+    """
+    Return Python expression(s) to zero-init *member* in place, or None.
+
+    Used by ``_reset(MessageInitialization.ZERO)`` and message ``clear()``.
+    Nested message members and arrays of messages return None — they are
+    handled by the ``_reset`` sub-message propagation.  Sequences of messages
+    return a ``clear()`` (zero = empty), which also resets pool elements.
+    """
     type_ = member.type
+    name = member.name
+
+    if isinstance(type_, BasicType):
+        return ['self.{}.value = {}'.format(name, _zero_literal(type_.typename))]
+
+    if isinstance(type_, (AbstractString, AbstractWString)):
+        return ["self.{}.assign('')".format(name)]
+
+    if isinstance(type_, NamespacedType):
+        return None  # handled by _reset sub-message propagation
 
     if isinstance(type_, Array):
         vt = type_.value_type
         if isinstance(vt, BasicType):
-            return None  # Arrays of primitives are zero-init by default
-        if isinstance(vt, AbstractGenericString):
-            return None  # String arrays already have empty strings
+            return ['self.{0}[:] = [{1}] * {2}'.format(
+                name, _zero_literal(vt.typename), type_.size)]
+        if isinstance(vt, (AbstractString, AbstractWString)):
+            # Multi-line to keep the generated code flake8-clean (no E701).
+            return ['for _e in self.{}[:]:'.format(name), "    _e.assign('')"]
         if isinstance(vt, NamespacedType):
-            return None  # Sub-message arrays are initialized recursively
+            return None  # handled by _reset sub-message propagation
         return None
+
     if isinstance(type_, AbstractSequence):
-        return None  # Sequences start empty
-    if isinstance(type_, BasicType):
-        return None  # Scalar default is 0
-    if isinstance(type_, AbstractGenericString):
-        return None  # Strings default to empty
-    if isinstance(type_, NamespacedType):
-        return None  # Sub-messages are initialized recursively
+        # Emptying also resets the content of any pool-backed elements.
+        return ['self.{}.clear()'.format(name)]
+
     return None
+
+
+def _zero_literal(typename):
+    """Return the Python zero literal for a BasicType typename."""
+    if typename == 'boolean':
+        return 'False'
+    if typename in ('float', 'double', 'long double'):
+        return '0.0'
+    return '0'
 
 
 # ---------------------------------------------------------------------------

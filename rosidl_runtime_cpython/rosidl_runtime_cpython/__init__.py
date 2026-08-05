@@ -63,6 +63,7 @@ from rosidl_runtime_cpython.constraints import (
     SequenceConstraint,
     StringConstraint,
 )
+from rosidl_runtime_cpython.copy import deepcopy_into
 from rosidl_runtime_cpython.dtype import Dtype
 from rosidl_runtime_cpython.message_initialization import MessageInitialization
 from rosidl_runtime_cpython.scalar import Scalar
@@ -107,4 +108,5 @@ __all__ = [
     'WString',
     'BoundedString',
     'BoundedWString',
+    'deepcopy_into',
 ]

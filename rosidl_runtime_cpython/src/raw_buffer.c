@@ -32,6 +32,13 @@
 ///              Does NOT own the memory; reserve() and resize() raise
 ///              BufferError.  Writable from Python (the caller controls
 ///              the lifecycle of the underlying memory).
+///
+/// Independent of ownership, a buffer may be marked non-growing
+/// (``growing=False``, or always the case for external buffers): its capacity
+/// is then fixed for its lifetime, and ``reserve()`` / ``resize()`` raise
+/// :exc:`BufferError` when growth beyond the capacity is requested.  This lets
+/// containers (String, Sequence, ...) simulate external fixed-capacity
+/// semantics with plain owned buffers.
 
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
@@ -103,6 +110,12 @@ typedef struct {
 
   // Ownership flag.  1 = managed (owns the allocation), 0 = external view.
   int is_owner;
+
+  // Growth flag.  1 = capacity may grow on demand (reserve/resize), 0 =
+  // fixed capacity (raises BufferError when growth is requested).  External
+  // buffers are always non-growing; owned buffers may opt out via the
+  // `growing=False` constructor keyword.
+  int growing;
 
   // Number of active Py_buffer exports on the *current* allocation.
   // Protected by the GIL.
@@ -189,6 +202,7 @@ RawBuffer_new(PyTypeObject * type, PyObject * args, PyObject * kwargs)
   memset(&self->region, 0, sizeof(rosidl_memory_region_t));
   self->size = 0;
   self->is_owner = 1;
+  self->growing = 1;
   self->export_count = 0;
   self->pending_guard = NULL;
   return (PyObject *)self;
@@ -198,14 +212,26 @@ static int
 RawBuffer_init(RawBuffer * self, PyObject * args, PyObject * kwargs)
 {
   // Accept either:
-  //   RawBuffer()             — empty, zero capacity
-  //   RawBuffer(capacity)     — allocate `capacity` zero-filled bytes
-  //   RawBuffer(data)         — allocate and copy bytes-like object; size = len(data)
-  static char * kwlist[] = {"data", NULL};
+  //   RawBuffer()                        — empty, zero capacity
+  //   RawBuffer(capacity)                — allocate `capacity` zero-filled bytes
+  //   RawBuffer(data)                    — allocate and copy bytes-like object;
+  //                                        size = len(data)
+  //   RawBuffer(..., growing=False)      — fixed capacity (no growth)
+  static char * kwlist[] = {"data", "growing", NULL};
   PyObject * data_obj = NULL;
+  PyObject * growing_obj = NULL;
 
-  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|O", kwlist, &data_obj)) {
+  if (!PyArg_ParseTupleAndKeywords(
+      args, kwargs, "|OO", kwlist, &data_obj, &growing_obj)) {
     return -1;
+  }
+
+  if (growing_obj != NULL) {
+    int growing = PyObject_IsTrue(growing_obj);
+    if (growing < 0) {
+      return -1;
+    }
+    self->growing = growing;
   }
 
   if (data_obj == NULL || data_obj == Py_None) {
@@ -287,6 +313,7 @@ _RawBuffer_FromRegion(const rosidl_memory_region_t * region)
   buf->region = *region;
   buf->size = (Py_ssize_t)region->size;
   buf->is_owner = 0;
+  buf->growing = 0;   // external memory can never grow
   return (PyObject *)buf;
 }
 
@@ -305,7 +332,7 @@ static const RawBuffer_CAPI_t _RawBuffer_CAPI = {
 
 // reserve(n): ensure at least n bytes of capacity.
 // Always allocates a fresh block so existing exports remain valid.
-// Raises BufferError for external (non-owning) buffers.
+// Raises BufferError for non-growing buffers (external or growing=False).
 static PyObject *
 RawBuffer_reserve(RawBuffer * self, PyObject * args)
 {
@@ -323,10 +350,10 @@ RawBuffer_reserve(RawBuffer * self, PyObject * args)
     Py_RETURN_NONE;
   }
 
-  if (!self->is_owner) {
+  if (!self->growing) {
     PyErr_SetString(
       PyExc_BufferError,
-      "cannot reserve on an external (non-owning) RawBuffer");
+      "cannot reserve on a non-growing RawBuffer (external or growing=False)");
     return NULL;
   }
 
@@ -365,19 +392,13 @@ RawBuffer_reserve(RawBuffer * self, PyObject * args)
 }
 
 // resize(n): set the logical size to n bytes, growing capacity as needed.
-// Raises BufferError for external (non-owning) buffers.
+// Growth raises BufferError for non-growing buffers (external or
+// growing=False); resizing within the existing capacity is always allowed.
 static PyObject *
 RawBuffer_resize(RawBuffer * self, PyObject * args)
 {
   Py_ssize_t new_size;
   if (!PyArg_ParseTuple(args, "n", &new_size)) {
-    return NULL;
-  }
-
-  if (!self->is_owner) {
-    PyErr_SetString(
-      PyExc_BufferError,
-      "cannot resize an external (non-owning) RawBuffer");
     return NULL;
   }
 
@@ -387,6 +408,13 @@ RawBuffer_resize(RawBuffer * self, PyObject * args)
   }
 
   if (new_size > RB_CAPACITY(self)) {
+    if (!self->growing) {
+      PyErr_SetString(
+        PyExc_BufferError,
+        "cannot grow a non-growing RawBuffer (external or growing=False) "
+        "beyond its capacity");
+      return NULL;
+    }
     // Geometric growth: double until sufficient.
     Py_ssize_t new_capacity = RB_CAPACITY(self) == 0 ? new_size : RB_CAPACITY(self);
     while (new_capacity < new_size) {
@@ -447,6 +475,13 @@ RawBuffer_get_is_owner(RawBuffer * self, void * closure)
 {
   (void)closure;
   return PyBool_FromLong(self->is_owner);
+}
+
+static PyObject *
+RawBuffer_get_growing(RawBuffer * self, void * closure)
+{
+  (void)closure;
+  return PyBool_FromLong(self->growing);
 }
 
 // ---------------------------------------------------------------------------
@@ -538,11 +573,12 @@ static PyObject *
 RawBuffer_repr(RawBuffer * self)
 {
   return PyUnicode_FromFormat(
-    "RawBuffer(address=%p, size=%zd, capacity=%zd, is_owner=%s)",
+    "RawBuffer(address=%p, size=%zd, capacity=%zd, is_owner=%s, growing=%s)",
     RB_DATA(self),
     self->size,
     RB_CAPACITY(self),
-    self->is_owner ? "True" : "False");
+    self->is_owner ? "True" : "False",
+    self->growing ? "True" : "False");
 }
 
 // ---------------------------------------------------------------------------
@@ -585,11 +621,12 @@ static PyMethodDef RawBuffer_methods[] = {
     "Ensure at least *n* bytes of capacity.\n\n"
     "Always allocates a new block so numpy views captured before this call\n"
     "remain valid (pointing to the old block) until they are GC-collected.\n"
-    "Raises BufferError on external (non-owning) buffers."},
+    "Raises BufferError on non-growing buffers (external, or growing=False)."},
   {"resize", (PyCFunction)RawBuffer_resize, METH_VARARGS,
     "resize(n)\n--\n\n"
     "Set the logical size to *n* bytes, growing capacity as needed.\n"
-    "Raises BufferError on external (non-owning) buffers."},
+    "Growth raises BufferError on non-growing buffers (external, or\n"
+    "growing=False); resizing within the existing capacity is always allowed."},
 #if PY_VERSION_HEX >= 0x030c0000
   {"__buffer__", (PyCFunction)RawBuffer_py_buffer, METH_O, NULL},
   {"__release_buffer__", (PyCFunction)RawBuffer_py_release_buffer, METH_O, NULL},
@@ -608,6 +645,9 @@ static PyGetSetDef RawBuffer_getset[] = {
     "bool: True if this buffer owns and manages the underlying memory,\n"
     "False if it holds a non-owning view over an external "
     "rosidl_memory_region_t.", NULL},
+  {"growing", (getter)RawBuffer_get_growing, NULL,
+    "bool: True if the capacity may grow on demand (reserve/resize),\n"
+    "False if the capacity is fixed for the lifetime of the buffer.", NULL},
   {NULL, NULL, NULL, NULL, NULL}
 };
 
@@ -615,14 +655,17 @@ static PyTypeObject RawBuffer_Type = {
   PyVarObject_HEAD_INIT(NULL, 0)
   .tp_name = "rosidl_runtime_py._raw_buffer.RawBuffer",
   .tp_doc =
-    "RawBuffer(data=None)\n--\n\n"
+    "RawBuffer(data=None, growing=True)\n--\n\n"
     "Byte buffer that holds a rosidl_memory_region_t and implements the\n"
     "PEP 3118 buffer protocol plus integer indexing.\n\n"
     "Construction:\n\n"
     "  RawBuffer()           — empty managed buffer, no allocation.\n"
     "  RawBuffer(n)          — allocate n zero-filled bytes.\n"
     "  RawBuffer(data)       — allocate and copy a bytes-like object;\n"
-    "                          size is set to len(data).\n\n"
+    "                          size is set to len(data).\n"
+    "  RawBuffer(..., growing=False)\n"
+    "                        — fixed capacity: reserve()/resize() raise\n"
+    "                          BufferError when growth is requested.\n\n"
     "Indexing:\n\n"
     "  buf[i]                — return byte at index i as int.\n"
     "  buf[i] = v            — write int v (0-255) at index i.\n"
@@ -631,7 +674,8 @@ static PyTypeObject RawBuffer_Type = {
     "  Managed  — owns PyMem-allocated storage; constructed from Python.\n"
     "  External — holds a non-owning view over a caller-supplied\n"
     "             rosidl_memory_region_t; constructed from C/C++ via\n"
-    "             RawBuffer_FromRegion() (see raw_buffer.h).\n\n"
+    "             RawBuffer_FromRegion() (see raw_buffer.h).  Always\n"
+    "             non-growing.\n\n"
     "Both modes are writable from Python.\n\n"
     "reserve() always allocates a *new* block, so numpy arrays produced via\n"
     "numpy.frombuffer() before a reserve remain valid (but stale) until GC.",

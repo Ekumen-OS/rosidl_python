@@ -44,6 +44,10 @@ class String:
     ``String(buffer=buf)``
         Use *buf* as backing storage.  Mutations that exceed capacity raise
         :exc:`BufferError` for external (non-owning) buffers.
+
+    ``String(buffer=buf, initial_size=n)``
+        Also expose *n* content bytes already present in *buf* (zero-copy
+        cast path); the logical size is clamped to the buffer capacity.
     """
 
     __slots__ = ('_buffer', '_size', '_view')
@@ -55,6 +59,7 @@ class String:
         data: str | bytes | bytearray | memoryview | None = None,
         *,
         buffer: RawBuffer | None = None,
+        initial_size: int = 0,
     ) -> None:
         if buffer is not None:
             if not isinstance(buffer, RawBuffer):
@@ -63,7 +68,14 @@ class String:
             self._buffer = buffer
         else:
             self._buffer = RawBuffer()
-        self._size = 0   # number of live bytes (NOT counting any NUL terminator)
+        # Logical size: number of live bytes (NOT counting any NUL terminator).
+        # When constructed over external storage, *initial_size* exposes the
+        # content length already present in the buffer (zero-copy cast path);
+        # it is clamped to the buffer capacity.
+        if initial_size:
+            self._size = min(int(initial_size), self._capacity())
+        else:
+            self._size = 0
         self._view: npt.NDArray[Any] = self._make_view()
         if data is not None:
             self.assign(data)
@@ -319,6 +331,10 @@ class WString:
     ``WString(buffer=buf)``
         Use *buf* as backing storage.  Mutations that exceed capacity raise
         :exc:`BufferError` for external (non-owning) buffers.
+
+    ``WString(buffer=buf, initial_size=n)``
+        Also expose *n* content code units already present in *buf*
+        (zero-copy cast path); clamped to the buffer capacity.
     """
 
     __slots__ = ('_buffer', '_size', '_view')
@@ -331,6 +347,7 @@ class WString:
         data: str | bytes | bytearray | memoryview | None = None,
         *,
         buffer: RawBuffer | None = None,
+        initial_size: int = 0,
     ) -> None:
         if buffer is not None:
             if not isinstance(buffer, RawBuffer):
@@ -339,7 +356,13 @@ class WString:
             self._buffer = buffer
         else:
             self._buffer = RawBuffer()
-        self._size = 0   # number of live code units
+        # Logical size: number of live code units (NOT counting any NUL
+        # terminator).  *initial_size* exposes content already present in an
+        # external buffer (zero-copy cast path), clamped to capacity.
+        if initial_size:
+            self._size = min(int(initial_size), self._capacity())
+        else:
+            self._size = 0
         self._view: npt.NDArray[Any] = self._make_view()
         if data is not None:
             self.assign(data)
@@ -602,12 +625,13 @@ class BoundedString(String):
         data: str | bytes | bytearray | memoryview | None = None,
         *,
         buffer: RawBuffer | None = None,
+        initial_size: int = 0,
     ) -> None:
         if not isinstance(upper_bound, int) or upper_bound <= 0:
             raise ValueError(
                 f'upper_bound must be a positive integer, got {upper_bound!r}')
         self._upper_bound = upper_bound
-        super().__init__(data, buffer=buffer)
+        super().__init__(data, buffer=buffer, initial_size=initial_size)
 
     @property
     def max_size(self) -> int:
@@ -640,12 +664,13 @@ class BoundedWString(WString):
         data: str | bytes | bytearray | memoryview | None = None,
         *,
         buffer: RawBuffer | None = None,
+        initial_size: int = 0,
     ) -> None:
         if not isinstance(upper_bound, int) or upper_bound <= 0:
             raise ValueError(
                 f'upper_bound must be a positive integer, got {upper_bound!r}')
         self._upper_bound = upper_bound
-        super().__init__(data, buffer=buffer)
+        super().__init__(data, buffer=buffer, initial_size=initial_size)
 
     @property
     def max_size(self) -> int:

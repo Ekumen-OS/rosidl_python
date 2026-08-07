@@ -158,12 +158,18 @@ def experimental_msg_type_with_element_pool(type_, element_expr, storage_expr):
     storage list; it may evaluate to None at runtime, in which case the pool
     falls back to None (managed storage) — the guard is generated here.
 
+    The sequence also exposes ``initial_size`` on the zero-copy cast path
+    (when the message storage is ``prepopulated``): the element count is the
+    length of the pool.
+
     Example: a ``string[]`` member ``foo`` with storage
     ``_storage.members.foo`` produces::
 
         Sequence(String, element_pool=(
             [String(buffer=buf) for buf in _storage.members.foo]
-            if _storage.members.foo is not None else None))
+            if _storage.members.foo is not None else None),
+            initial_size=(len(_storage.members.foo)
+                          if _storage.prepopulated else 0))
     """
     base = experimental_msg_type(type_)
     if not base.endswith(')'):
@@ -173,7 +179,13 @@ def experimental_msg_type_with_element_pool(type_, element_expr, storage_expr):
         element=element_expr, storage=storage_expr)
     guarded_pool = '({pool} if {storage} is not None else None)'.format(
         pool=pool_expr, storage=storage_expr)
-    return base[:-1] + ', element_pool={})'.format(guarded_pool)
+    # The storage member is itself a list of the same length as the pool, so
+    # there is no need to build a temporary list just to measure it.
+    init_expr = (
+        'initial_size=(len({storage}) if _storage.prepopulated else 0)'
+    ).format(storage=storage_expr)
+    return base[:-1] + ', element_pool={pool}, {init})'.format(
+        pool=guarded_pool, init=init_expr)
 
 
 # ---------------------------------------------------------------------------
@@ -416,6 +428,10 @@ def experimental_storage_init_expr(member_name, type_):
 
     For complex cases (arrays/sequences of strings/messages), returns None
     to signal that the template should generate custom initialization code.
+
+    String / primitive-sequence members also expose their content size via
+    ``initial_size=`` when the storage is ``prepopulated`` (zero-copy cast
+    path) — the RawBuffer's logical size carries the wire length.
     """
     storage_path = '_storage.members.{}'.format(member_name)
 
@@ -426,17 +442,29 @@ def experimental_storage_init_expr(member_name, type_):
 
     if isinstance(type_, AbstractString):
         if type_.has_maximum_size():
-            return 'BoundedString({bound}, buffer={storage})'.format(
-                bound=type_.maximum_size, storage=storage_path)
-        return 'String(buffer={storage})'.format(storage=storage_path)
+            return (
+                'BoundedString({bound}, buffer={storage}, '
+                'initial_size=({storage}.size if _storage.prepopulated else 0))'
+            ).format(bound=type_.maximum_size, storage=storage_path)
+        return (
+            'String(buffer={storage}, '
+            'initial_size=({storage}.size if _storage.prepopulated else 0))'
+        ).format(storage=storage_path)
 
     if isinstance(type_, AbstractWString):
         if type_.has_maximum_size():
-            return 'BoundedWString({bound}, buffer={storage})'.format(
-                bound=type_.maximum_size, storage=storage_path)
-        return 'WString(buffer={storage})'.format(storage=storage_path)
+            return (
+                'BoundedWString({bound}, buffer={storage}, '
+                'initial_size=({storage}.size // 2 if _storage.prepopulated else 0))'
+            ).format(bound=type_.maximum_size, storage=storage_path)
+        return (
+            'WString(buffer={storage}, '
+            'initial_size=({storage}.size // 2 if _storage.prepopulated else 0))'
+        ).format(storage=storage_path)
 
     if isinstance(type_, NamespacedType):
+        # The nested ExternalStorage's own prepopulated flag is set by the
+        # zero-copy cast populate (propagated from the top-level storage).
         return '{type_name}(_storage={storage})'.format(
             type_name=type_.name, storage=storage_path)
 
@@ -453,13 +481,18 @@ def experimental_storage_init_expr(member_name, type_):
     if isinstance(type_, AbstractSequence):
         vt = type_.value_type
         if isinstance(vt, BasicType):
-            # Primitive sequence: single contiguous buffer
+            # Primitive sequence: single contiguous buffer; expose the
+            # element count already in the buffer on the cast path.
             dtype = BASIC_TYPE_TO_DTYPE[vt.typename]
+            init = (
+                'initial_size=({storage}.size // {dtype}.itemsize '
+                'if _storage.prepopulated else 0)'
+            ).format(storage=storage_path, dtype=dtype)
             if isinstance(type_, BoundedSequence):
-                return 'BoundedSequence({dtype}, {bound}, buffer={storage})'.format(
-                    dtype=dtype, bound=type_.maximum_size, storage=storage_path)
-            return 'Sequence({dtype}, buffer={storage})'.format(
-                dtype=dtype, storage=storage_path)
+                return 'BoundedSequence({dtype}, {bound}, buffer={storage}, {init})'.format(
+                    dtype=dtype, bound=type_.maximum_size, storage=storage_path, init=init)
+            return 'Sequence({dtype}, buffer={storage}, {init})'.format(
+                dtype=dtype, storage=storage_path, init=init)
         # Complex sequences need per-element initialization - template handles it
         return None
 

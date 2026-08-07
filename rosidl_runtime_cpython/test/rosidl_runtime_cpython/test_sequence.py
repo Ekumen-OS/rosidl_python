@@ -827,3 +827,57 @@ def test_pool_primitive_external_resize_zero_fills_new_slots():
     s.assign([1, 2])
     s.resize(4)                       # grow on non-owning buffer
     assert list(s) == [1, 2, 0, 0]
+
+
+# ---------------------------------------------------------------------------
+# initial_size — expose elements already present in external storage
+# (zero-copy cast path)
+# ---------------------------------------------------------------------------
+
+def test_primitive_initial_size_exposes_elements():
+    import struct
+    buf = RawBuffer(struct.pack('<ii', 3, 7), growing=False)
+    s = Sequence(Dtype.INT32, buffer=buf, initial_size=2)
+    assert len(s) == 2
+    assert list(s) == [3, 7]
+
+
+def test_primitive_initial_size_zero_default():
+    import struct
+    buf = RawBuffer(struct.pack('<ii', 3, 7), growing=False)
+    s = Sequence(Dtype.INT32, buffer=buf)
+    assert len(s) == 0
+
+
+def test_primitive_initial_size_clamped_to_capacity():
+    import struct
+    buf = RawBuffer(struct.pack('<ii', 3, 7), growing=False)
+    s = Sequence(Dtype.INT32, buffer=buf, initial_size=5)
+    assert len(s) == 2
+
+
+def test_pool_initial_size_exposes_pool_elements():
+    # Pool elements must carry their own content size (as the generated
+    # external-storage init does), and the sequence exposes both elements.
+    pool = [
+        String(buffer=RawBuffer(b'aa', growing=False), initial_size=2),
+        String(buffer=RawBuffer(b'bb', growing=False), initial_size=2),
+    ]
+    s = Sequence(String, element_pool=pool, initial_size=2)
+    assert len(s) == 2
+    assert str(s[0]) == 'aa'
+    assert str(s[1]) == 'bb'
+
+
+def test_pool_initial_size_clamped_to_pool_length():
+    pool = [String(buffer=RawBuffer(2, growing=False))]
+    s = Sequence(String, element_pool=pool, initial_size=5)
+    assert len(s) == 1
+
+
+def test_bounded_sequence_initial_size():
+    import struct
+    buf = RawBuffer(struct.pack('<iii', 1, 2, 3), growing=False)
+    s = BoundedSequence(Dtype.INT32, 3, buffer=buf, initial_size=3)
+    assert len(s) == 3
+    assert list(s) == [1, 2, 3]

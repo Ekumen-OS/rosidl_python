@@ -204,6 +204,7 @@ storage_fields_shadow_builtin = experimental_builtin_shadow_names(storage_fields
 
         block: RawBuffer | None = None
         members: Members = dataclasses.field(default_factory=Members)
+        prepopulated: bool = False
 
         def __post_init__(self):
             # Fast type assertion for debug builds (no-op with -O)
@@ -229,6 +230,9 @@ storage_fields_shadow_builtin = experimental_builtin_shadow_names(storage_fields
         if _storage is not None:
             # Store reference to keep storage descriptors alive
             object.__setattr__(self, '_external_storage', _storage)
+            # Zero-copy cast path: containers expose the sizes already present
+            # in the wire buffer (strings/sequences are prepopulated); the
+            # generated expressions read _storage.prepopulated directly.
             # Initialize from external storage
 @[if not is_empty_struct]@
 @[  for member in message.structure.members]@
@@ -255,15 +259,17 @@ is_sequence_of_msgs = is_sequence and is_msg
 # External element-pool constructor for sequences of strings/messages.
 # The pool (one pre-constructed container per external buffer) fixes the
 # capacity; the sequence starts empty and mutations write into pool slots.
+# On the cast path (_storage.prepopulated) the pool elements and the sequence
+# expose the sizes already present in the wire buffer.
 if is_sequence_of_strings:
     if is_bounded_wstring:
-        elem_ctor = 'BoundedWString({}, buffer=buf)'.format(vt.maximum_size)
+        elem_ctor = 'BoundedWString({}, buffer=buf, initial_size=(buf.size // 2 if _storage.prepopulated else 0))'.format(vt.maximum_size)
     elif is_unbounded_wstring:
-        elem_ctor = 'WString(buffer=buf)'
+        elem_ctor = 'WString(buffer=buf, initial_size=(buf.size // 2 if _storage.prepopulated else 0))'
     elif is_bounded_regular_string:
-        elem_ctor = 'BoundedString({}, buffer=buf)'.format(vt.maximum_size)
+        elem_ctor = 'BoundedString({}, buffer=buf, initial_size=(buf.size if _storage.prepopulated else 0))'.format(vt.maximum_size)
     else:
-        elem_ctor = 'String(buffer=buf)'
+        elem_ctor = 'String(buffer=buf, initial_size=(buf.size if _storage.prepopulated else 0))'
     seq_ctor = experimental_msg_type_with_element_pool(
         member.type, elem_ctor, '_storage.members.{}'.format(member.name))
 elif is_sequence_of_msgs:
@@ -281,13 +287,13 @@ elif is_sequence_of_msgs:
                 assert isinstance(storage_bufs, list) and len(storage_bufs) == @(member.type.size)
                 for i, buf in enumerate(storage_bufs):
 @[    if is_bounded_wstring]@
-                    self.@(member.name)[i] = BoundedWString(@(vt.maximum_size), buffer=buf)
+                    self.@(member.name)[i] = BoundedWString(@(vt.maximum_size), buffer=buf, initial_size=(buf.size // 2 if _storage.prepopulated else 0))
 @[    elif is_unbounded_wstring]@
-                    self.@(member.name)[i] = WString(buffer=buf)
+                    self.@(member.name)[i] = WString(buffer=buf, initial_size=(buf.size // 2 if _storage.prepopulated else 0))
 @[    elif is_bounded_regular_string]@
-                    self.@(member.name)[i] = BoundedString(@(vt.maximum_size), buffer=buf)
+                    self.@(member.name)[i] = BoundedString(@(vt.maximum_size), buffer=buf, initial_size=(buf.size if _storage.prepopulated else 0))
 @[    else]@
-                    self.@(member.name)[i] = String(buffer=buf)
+                    self.@(member.name)[i] = String(buffer=buf, initial_size=(buf.size if _storage.prepopulated else 0))
 @[    end if]@
 @[  elif is_sequence_of_strings]@
             # Sequence of strings from list[RawBuffer] — external element pool

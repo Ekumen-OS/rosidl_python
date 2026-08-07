@@ -73,7 +73,7 @@ RawBufferGuard_dealloc(RawBufferGuard * self)
 
 static PyTypeObject RawBufferGuard_Type = {
   PyVarObject_HEAD_INIT(NULL, 0)
-  .tp_name = "rosidl_runtime_py._raw_buffer.RawBufferGuard",
+  .tp_name = "rosidl_runtime_cpython._raw_buffer.RawBufferGuard",
   .tp_basicsize = sizeof(RawBufferGuard),
   .tp_dealloc = (destructor)RawBufferGuard_dealloc,
   .tp_flags = Py_TPFLAGS_DEFAULT,
@@ -653,7 +653,7 @@ static PyGetSetDef RawBuffer_getset[] = {
 
 static PyTypeObject RawBuffer_Type = {
   PyVarObject_HEAD_INIT(NULL, 0)
-  .tp_name = "rosidl_runtime_py._raw_buffer.RawBuffer",
+  .tp_name = "rosidl_runtime_cpython._raw_buffer.RawBuffer",
   .tp_doc =
     "RawBuffer(data=None, growing=True)\n--\n\n"
     "Byte buffer that holds a rosidl_memory_region_t and implements the\n"
@@ -698,9 +698,9 @@ static PyTypeObject RawBuffer_Type = {
 
 static PyModuleDef _raw_buffer_module = {
   PyModuleDef_HEAD_INIT,
-  .m_name = "rosidl_runtime_py._raw_buffer",
+  .m_name = "rosidl_runtime_cpython._raw_buffer",
   .m_doc =
-    "Internal C extension for rosidl_runtime_py.\n\n"
+    "Internal C extension for rosidl_runtime_cpython.\n\n"
     "Exports:\n"
     "  RawBuffer — managed or non-owning-view byte buffer over a\n"
     "              rosidl_memory_region_t.\n"

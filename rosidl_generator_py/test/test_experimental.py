@@ -33,6 +33,7 @@ from rosidl_generator_py.experimental import (  # noqa: E402
     experimental_constraint_type,
     experimental_msg_type,
     experimental_msg_type_with_element_pool,
+    experimental_storage_init_expr,
     experimental_zero_value_expr,
 )
 from rosidl_parser.definition import (  # noqa: E402
@@ -221,17 +222,24 @@ class TestExperimentalMsgTypeWithElementPool:
     def test_unbounded_string_sequence(self):
         assert experimental_msg_type_with_element_pool(
             UnboundedSequence(UnboundedString()),
-            'String(buffer=buf)', '_storage.members.foo') == (
-            'Sequence(String, element_pool=([String(buffer=buf) for buf in '
-            '_storage.members.foo] if _storage.members.foo is not None else None))')
+            'String(buffer=buf, initial_size=(buf.size if _storage.prepopulated else 0))',
+            '_storage.members.foo') == (
+            'Sequence(String, element_pool=([String(buffer=buf, '
+            'initial_size=(buf.size if _storage.prepopulated else 0)) for buf in '
+            '_storage.members.foo] if _storage.members.foo is not None else '
+            'None), initial_size=(len(_storage.members.foo) '
+            'if _storage.prepopulated else 0))')
 
     def test_bounded_string_sequence(self):
+        elem = ('BoundedString(10, buffer=buf, '
+                'initial_size=(buf.size if _storage.prepopulated else 0))')
         assert experimental_msg_type_with_element_pool(
-            BoundedSequence(BoundedString(10), 8),
-            'BoundedString(10, buffer=buf)', '_storage.members.foo') == (
+            BoundedSequence(BoundedString(10), 8), elem, '_storage.members.foo') == (
             'BoundedSequence(BoundedString, 8, element_pool=('
-            '[BoundedString(10, buffer=buf) for buf in _storage.members.foo] '
-            'if _storage.members.foo is not None else None))')
+            f'[{elem} for buf in _storage.members.foo] '
+            'if _storage.members.foo is not None else None), '
+            'initial_size=(len(_storage.members.foo) '
+            'if _storage.prepopulated else 0))')
 
     def test_message_sequence(self):
         sub = NamespacedType(['pkg', 'msg'], 'Sub')
@@ -241,7 +249,8 @@ class TestExperimentalMsgTypeWithElementPool:
             '_storage.members.foo') == (
             'Sequence(Sub, element_pool=([Sub(_storage=buf, '
             '_init=MessageInitialization.SKIP) for buf in _storage.members.foo] '
-            'if _storage.members.foo is not None else None))')
+            'if _storage.members.foo is not None else None), initial_size=('
+            'len(_storage.members.foo) if _storage.prepopulated else 0))')
 
 
 # ---------------------------------------------------------------------------
@@ -302,3 +311,49 @@ class TestExperimentalZeroValueExpr:
         assert experimental_zero_value_expr(
             Member(UnboundedSequence(NamespacedType(['pkg', 'msg'], 'Sub')),
                    'subs')) == ['self.subs.clear()']
+
+
+# ---------------------------------------------------------------------------
+# experimental_storage_init_expr (external-storage init, prepopulated gating)
+# ---------------------------------------------------------------------------
+
+class TestExperimentalStorageInitExpr:
+
+    def test_string_init(self):
+        assert experimental_storage_init_expr('text', UnboundedString()) == (
+            'String(buffer=_storage.members.text, '
+            'initial_size=(_storage.members.text.size if _storage.prepopulated else 0))')
+
+    def test_bounded_string_init(self):
+        assert experimental_storage_init_expr('bt', BoundedString(8)) == (
+            'BoundedString(8, buffer=_storage.members.bt, '
+            'initial_size=(_storage.members.bt.size if _storage.prepopulated else 0))')
+
+    def test_wstring_init(self):
+        assert experimental_storage_init_expr('w', UnboundedWString()) == (
+            'WString(buffer=_storage.members.w, '
+            'initial_size=(_storage.members.w.size // 2 if _storage.prepopulated else 0))')
+
+    def test_primitive_sequence_init(self):
+        assert experimental_storage_init_expr(
+            'seq', UnboundedSequence(BasicType('int32'))) == (
+            'Sequence(Dtype.INT32, buffer=_storage.members.seq, '
+            'initial_size=(_storage.members.seq.size // Dtype.INT32.itemsize '
+            'if _storage.prepopulated else 0))')
+
+    def test_bounded_sequence_init(self):
+        assert experimental_storage_init_expr(
+            'bseq', BoundedSequence(BasicType('int32'), 8)) == (
+            'BoundedSequence(Dtype.INT32, 8, buffer=_storage.members.bseq, '
+            'initial_size=(_storage.members.bseq.size // Dtype.INT32.itemsize '
+            'if _storage.prepopulated else 0))')
+
+    def test_nested_message_init(self):
+        sub = NamespacedType(['pkg', 'msg'], 'Sub')
+        assert experimental_storage_init_expr('sub', sub) == (
+            'Sub(_storage=_storage.members.sub)')
+
+    def test_primitive_array_init(self):
+        assert experimental_storage_init_expr(
+            'a', Array(BasicType('int32'), 4)) == (
+            'Array(Dtype.INT32, 4, buffer=_storage.members.a)')

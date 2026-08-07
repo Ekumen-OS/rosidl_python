@@ -70,6 +70,10 @@ class Sequence:
         into the pool elements.  An empty pool falls back to managed
         (unbounded) storage.
 
+    ``Sequence(..., initial_size=n)``
+        Expose *n* elements already present in the external backing
+        (zero-copy cast path), clamped to capacity / pool length.
+
     Notes
     -----
     The sequence does NOT silently promote from external to managed storage.
@@ -89,6 +93,7 @@ class Sequence:
         data: Any = None,
         buffer: RawBuffer | None = None,
         element_pool: list[Any] | None = None,
+        initial_size: int = 0,
     ) -> None:
         self._dtype = dtype
         self._is_primitive = isinstance(dtype, Dtype)
@@ -103,6 +108,10 @@ class Sequence:
             else:
                 self._buffer = RawBuffer()
             self._store: npt.NDArray[Any] | None = None
+            # *initial_size* exposes elements already present in an external
+            # buffer (zero-copy cast path), clamped to capacity.
+            if initial_size:
+                self._size = min(int(initial_size), self._capacity())
             self._view: npt.NDArray[Any] = self._make_view()
             self._element_pool = None
         else:
@@ -133,6 +142,10 @@ class Sequence:
                     # elements: stores PyObject* pointers.
                     self._store = np.empty(len(pool), dtype=object)
                     self._store[:] = pool
+                    # *initial_size* exposes pool elements already populated
+                    # by a zero-copy cast, clamped to the pool length.
+                    if initial_size:
+                        self._size = min(int(initial_size), len(pool))
             else:
                 self._element_pool = None
                 # Capacity-sized numpy object array: stores PyObject* pointers.
@@ -667,6 +680,10 @@ class BoundedSequence(Sequence):
         containers) as fixed backing.  The effective element limit is
         ``min(upper_bound, len(pool))`` — the bound is checked first
         (:exc:`ValueError`), the pool capacity second (:exc:`BufferError`).
+
+    ``Sequence(..., initial_size=n)``
+        Expose *n* elements already present in the external backing
+        (zero-copy cast path), clamped to capacity / pool length.
     """
 
     __slots__ = ('_upper_bound',)
@@ -679,13 +696,15 @@ class BoundedSequence(Sequence):
         data: Any = None,
         buffer: RawBuffer | None = None,
         element_pool: list[Any] | None = None,
+        initial_size: int = 0,
     ) -> None:
         if not isinstance(upper_bound, int) or upper_bound <= 0:
             raise ValueError(
                 f'upper_bound must be a positive integer, got {upper_bound!r}')
         self._upper_bound = upper_bound
         super().__init__(
-            dtype, data=data, buffer=buffer, element_pool=element_pool)
+            dtype, data=data, buffer=buffer, element_pool=element_pool,
+            initial_size=initial_size)
 
     @property
     def max_size(self) -> int:

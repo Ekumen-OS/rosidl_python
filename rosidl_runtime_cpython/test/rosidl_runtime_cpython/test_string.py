@@ -677,3 +677,39 @@ class TestExternalBackedBoundedString:
         s = BoundedString(8, buffer=RawBuffer(4, growing=False))
         with pytest.raises(BufferError, match='capacity'):
             s.assign('hello')  # within bound (5 < 8) but beyond capacity (4)
+
+
+# ===========================================================================
+# initial_size — expose content already present in external storage
+# (zero-copy cast path)
+# ===========================================================================
+
+class TestInitialSize:
+
+    def test_string_initial_size_exposes_content(self):
+        buf = RawBuffer(b'hello', growing=False)
+        s = String(buffer=buf, initial_size=5)
+        assert len(s) == 5
+        assert str(s) == 'hello'
+
+    def test_string_initial_size_zero_default(self):
+        buf = RawBuffer(b'hello', growing=False)
+        s = String(buffer=buf)
+        assert len(s) == 0
+
+    def test_string_initial_size_clamped_to_capacity(self):
+        buf = RawBuffer(4, growing=False)
+        s = String(buffer=buf, initial_size=10)
+        assert len(s) == 4
+
+    def test_wstring_initial_size_exposes_content(self):
+        buf = RawBuffer('hi'.encode('utf-16-le'), growing=False)
+        s = WString(buffer=buf, initial_size=2)
+        assert len(s) == 2
+        assert str(s) == 'hi'
+
+    def test_bounded_string_initial_size(self):
+        buf = RawBuffer(b'hello', growing=False)
+        s = BoundedString(8, buffer=buf, initial_size=5)
+        assert len(s) == 5
+        assert str(s) == 'hello'

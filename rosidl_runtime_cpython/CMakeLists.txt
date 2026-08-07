@@ -20,6 +20,9 @@ cmake_policy(SET CMP0094 NEW)
 set(Python3_FIND_UNVERSIONED_NAMES FIRST)
 find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
 
+find_package(pybind11_vendor REQUIRED)
+find_package(pybind11 REQUIRED)
+
 # ---------------------------------------------------------------------------
 # Pure Python package
 # ---------------------------------------------------------------------------
@@ -44,6 +47,24 @@ set_target_properties(_raw_buffer PROPERTIES
 )
 
 install(TARGETS _raw_buffer
+  DESTINATION "${PYTHON_INSTALL_DIR}/rosidl_runtime_cpython"
+)
+
+# ---------------------------------------------------------------------------
+# C++ extension: rosidl_runtime_cpython._raw_buffer_cpp  (pybind11 helpers)
+# ---------------------------------------------------------------------------
+pybind11_add_module(_raw_buffer_cpp src/raw_buffer_cpp.cpp)
+target_include_directories(_raw_buffer_cpp PRIVATE
+  "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+  ${rosidl_runtime_c_INCLUDE_DIRS}
+)
+target_link_libraries(_raw_buffer_cpp PRIVATE
+  rosidl_runtime_c::rosidl_runtime_c
+)
+set_target_properties(_raw_buffer_cpp PROPERTIES
+  LIBRARY_OUTPUT_DIRECTORY $<1:${CMAKE_CURRENT_BINARY_DIR}/rosidl_runtime_cpython>
+)
+install(TARGETS _raw_buffer_cpp
   DESTINATION "${PYTHON_INSTALL_DIR}/rosidl_runtime_cpython"
 )
 
@@ -76,6 +97,7 @@ if(BUILD_TESTING)
     test/rosidl_runtime_cpython/test_sequence.py
     test/rosidl_runtime_cpython/test_string.py
     test/rosidl_runtime_cpython/test_copy.py
+    test/rosidl_runtime_cpython/test_raw_buffer_cpp.py
   )
   foreach(_test_path ${_pytest_tests})
     get_filename_component(_test_name ${_test_path} NAME_WE)

@@ -1,0 +1,36 @@
+#!/usr/bin/env python3
+
+import argparse
+import sys
+
+from rosidl_typesupport_cpython import generate_cpython
+
+
+def main(argv=sys.argv[1:]):
+    parser = argparse.ArgumentParser(
+        description='Generate the CPython type support dispatch to handle ROS messages.',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument(
+        '--generator-arguments-file',
+        required=True,
+        help='The location of the file containing the generator arguments')
+    parser.add_argument(
+        '--typesupports',
+        required=True,
+        nargs='+',
+        help='The CPython typesupports to be used')
+    parser.add_argument(
+        '--experimental-typesupports',
+        required=False,
+        nargs='*',
+        default=[],
+        help='The CPython typesupports with experimental message support')
+    args = parser.parse_args(argv)
+
+    generate_cpython(
+        args.generator_arguments_file, args.typesupports,
+        experimental_type_supports=args.experimental_typesupports)
+
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -31,11 +31,9 @@ foreach(_abs_idl_file ${rosidl_generate_interfaces_ABS_IDL_FILES})
   get_filename_component(_parent_folder "${_parent_folder}" NAME)
   get_filename_component(_idl_name "${_abs_idl_file}" NAME_WE)
   string_camel_case_to_lower_case_underscore("${_idl_name}" _header_name)
-  list(APPEND _generated_sources
-    "${_output_path}/${_parent_folder}/${_header_name}__type_support.cpp"
-  )
-  # Experimental variant (generated alongside standard when experimental
-  # typesupports are available).
+  # Only experimental dispatch entries are generated: the CPython typesupport
+  # represents experimental (container-API) message classes, and standard
+  # messages resolve through the legacy C typesupport instead.
   list(APPEND _generated_sources
     "${_output_path}/${_parent_folder}/experimental/detail/${_header_name}__type_support.cpp"
   )
@@ -167,7 +165,11 @@ if(NOT rosidl_generate_interfaces_SKIP_INSTALL)
   ament_export_dependencies(
     "rosidl_runtime_c"
     "rosidl_typesupport_c"
-    "rosidl_typesupport_interface")
+    "rosidl_typesupport_interface"
+    # Consumers linking the generated dispatch library must be able to resolve
+    # the rosidl_typesupport_cpython::rosidl_typesupport_cpython target in its
+    # interface link libraries.
+    "rosidl_typesupport_cpython")
 endif()
 
 if(BUILD_TESTING AND rosidl_generate_interfaces_ADD_LINTER_TESTS)

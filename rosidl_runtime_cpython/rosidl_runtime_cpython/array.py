@@ -139,8 +139,39 @@ class Array:
             return val.item() if self._is_primitive else val
         return self._view[index]
 
+    def _coerce_element(self, value: Any, index: int) -> Any:
+        """
+        Coerce a pythonic value into the element at *index*, preserving identity.
+
+        For object arrays the elements are pre-constructed (e.g. WString /
+        message instances).  Pythonic scalars (``str``/``bytes``/...) are
+        assigned into the string-family element at *index* via its ``assign``
+        method, mirroring :meth:`Sequence._assign_element`; container/message
+        values that already match the element type are stored as-is.
+        """
+        if isinstance(value, (str, bytes, bytearray, memoryview)):
+            element = self._view[index]
+            if element is not None and hasattr(element, 'assign'):
+                element.assign(value)
+                return element
+        return value
+
     def __setitem__(self, index: int | slice, value: Any) -> None:
-        self._view[index] = value
+        if self._is_primitive:
+            self._view[index] = value
+            return
+        if isinstance(index, int):
+            self._view[index] = self._coerce_element(value, index)
+            return
+        # Slice assignment on an object array: coerce each value into the
+        # corresponding existing element (identity preserved).
+        values = list(value)
+        indices = range(self._length)[index]
+        if len(values) != len(indices):
+            raise ValueError(
+                f'cannot assign {len(values)} values to {len(indices)} elements')
+        for i, v in zip(indices, values):
+            self._view[i] = self._coerce_element(v, i)
 
     def __iter__(self) -> Iterator[Any]:
         if self._is_primitive:

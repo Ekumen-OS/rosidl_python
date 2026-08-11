@@ -31,9 +31,7 @@ def generate_cpython(generator_arguments_file, type_supports, experimental_type_
     :param type_supports: List of CPython type support implementations to be used
     :param experimental_type_supports: List of type supports with experimental message support
     """
-    mapping = {
-        'idl__type_support.cpp.em': '%s__type_support.cpp',
-    }
+    mapping = {}
     if experimental_type_supports:
         mapping['idl__experimental_type_support.cpp.em'] = \
             'experimental/detail/%s__type_support.cpp'

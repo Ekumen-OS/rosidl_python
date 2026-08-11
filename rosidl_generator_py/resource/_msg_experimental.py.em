@@ -3,6 +3,7 @@
 from rosidl_pycommon import convert_camel_case_to_lower_case_underscore
 from rosidl_generator_py.experimental import BASIC_TYPE_TO_DTYPE
 from rosidl_generator_py.experimental import experimental_builtin_shadow_names
+from rosidl_generator_py.experimental import experimental_constraint_default_expr
 from rosidl_generator_py.experimental import experimental_constraint_type
 from rosidl_generator_py.experimental import experimental_default_value_expr
 from rosidl_generator_py.experimental import experimental_msg_type
@@ -89,7 +90,9 @@ constraint_fields = []
 for m in message.structure.members:
     ct = experimental_constraint_type(m.type)
     if ct is not None:
-        constraint_fields.append((m.name, ct))
+        default_expr = experimental_constraint_default_expr(m.type)
+        constraint_fields.append(
+            (m.name, ct, default_expr if default_expr else ct + '()'))
 
 # Constraint parameters that shadow Python builtins (e.g. an IDL field named
 # property) cannot be renamed: they mirror the IDL member names and are part
@@ -118,18 +121,18 @@ class @(message.structure.namespaced_type.name):
 
         __slots__ = (@
 @[if constraint_fields]@
-'@("', '".join(name for name, _ in constraint_fields))',@
+'@("', '".join(name for name, _, _ in constraint_fields))',@
 @[end if]@
 )
 
         def __init__(self@
-@[for field_name, field_type in constraint_fields]@
+@[for field_name, field_type, _ in constraint_fields]@
 , @(field_name)=None@
 @[end for]@
 ):@[if constraint_params_shadow_builtin]  # noqa: A002@[end if]
 @[if constraint_fields]@
-@[  for field_name, field_type in constraint_fields]@
-            self.@(field_name) = @(field_name) if @(field_name) is not None else @(field_type)()
+@[  for field_name, field_type, field_default in constraint_fields]@
+            self.@(field_name) = @(field_name) if @(field_name) is not None else @(field_default)
 @[  end for]@
 @[else]@
             pass
@@ -141,7 +144,7 @@ class @(message.structure.namespaced_type.name):
 @[if not constraint_fields]@
             return True
 @[else]@
-@[  for field_name, _ in constraint_fields]@
+@[  for field_name, _, _ in constraint_fields]@
             if self.@(field_name) != other.@(field_name):
                 return False
 @[  end for]@
@@ -154,7 +157,7 @@ class @(message.structure.namespaced_type.name):
         def __repr__(self):
 @[if constraint_fields]@
             fields = []
-@[  for field_name, _ in constraint_fields]@
+@[  for field_name, _, _ in constraint_fields]@
             fields.append('@(field_name)={!r}'.format(self.@(field_name)))
 @[  end for]@
             return '@(message.structure.namespaced_type.name).Constraints({})'.format(', '.join(fields))

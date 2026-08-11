@@ -224,8 +224,30 @@ def experimental_constraint_type(type_):
         return None
     if isinstance(type_, AbstractSequence):
         if isinstance(type_, BoundedSequence):
+            # The sequence count bound is part of the type, but an unbounded
+            # string/wstring element still needs a per-element length bound
+            # (mirrors the C++ generator, which constrains the element).
+            vt = type_.value_type
+            if isinstance(vt, (AbstractString, AbstractWString)) and not vt.has_maximum_size():
+                return 'SequenceConstraint'
             return None
         return 'SequenceConstraint'
+    return None
+
+
+def experimental_constraint_default_expr(type_):
+    """
+    Return the default-construction expression for a member's constraint.
+
+    Returns a full expression when the plain ``<Type>()`` default would be
+    incomplete (e.g. a bounded sequence of unbounded strings needs an element
+    constraint so ``element.size`` is addressable), otherwise None (the caller
+    falls back to ``<Type>()``).
+    """
+    if isinstance(type_, AbstractSequence):
+        vt = type_.value_type
+        if isinstance(vt, (AbstractString, AbstractWString)) and not vt.has_maximum_size():
+            return 'SequenceConstraint(element=StringConstraint())'
     return None
 
 
@@ -240,7 +262,7 @@ def experimental_builtin_shadow_names(members):
     constraint or storage field lists built by the templates.
     """
     import builtins
-    return {name for name, _ in members if hasattr(builtins, name)}
+    return {name for name, *_ in members if hasattr(builtins, name)}
 
 
 # ---------------------------------------------------------------------------

@@ -881,3 +881,50 @@ def test_bounded_sequence_initial_size():
     s = BoundedSequence(Dtype.INT32, 3, buffer=buf, initial_size=3)
     assert len(s) == 3
     assert list(s) == [1, 2, 3]
+
+
+# ---------------------------------------------------------------------------
+# Managed object sequences must never store bare Python strings
+# ---------------------------------------------------------------------------
+
+def test_object_string_sequence_wraps_str_on_append():
+    from rosidl_runtime_cpython.string import String
+    s = Sequence(String)
+    s.append('hello')
+    assert len(s) == 1
+    assert isinstance(s[0], String)
+    assert str(s[0]) == 'hello'
+
+
+def test_object_string_sequence_wraps_str_on_extend_and_setitem():
+    from rosidl_runtime_cpython.string import String
+    s = Sequence(String)
+    s.extend(['a', 'b'])
+    s[1] = 'B'
+    assert all(isinstance(e, String) for e in s)
+    assert [str(e) for e in s] == ['a', 'B']
+
+
+def test_object_string_sequence_wraps_str_on_insert_and_assign():
+    from rosidl_runtime_cpython.string import String
+    s = Sequence(String)
+    s.assign(['x', 'y'])
+    s.insert(1, 'mid')
+    assert all(isinstance(e, String) for e in s)
+    assert [str(e) for e in s] == ['x', 'mid', 'y']
+
+
+def test_object_wstring_sequence_wraps_str():
+    from rosidl_runtime_cpython.string import WString
+    s = Sequence(WString)
+    s.append('héllo')
+    assert isinstance(s[0], WString)
+    assert str(s[0]) == 'héllo'
+
+
+def test_object_bounded_string_sequence_rejects_bare_str():
+    from rosidl_runtime_cpython.string import BoundedString
+    s = Sequence(BoundedString)
+    with pytest.raises(TypeError, match='bound'):
+        s.append('a')
+    assert len(s) == 0

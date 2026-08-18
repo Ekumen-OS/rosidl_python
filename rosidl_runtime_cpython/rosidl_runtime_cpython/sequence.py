@@ -24,6 +24,7 @@ import numpy.typing as npt
 
 from rosidl_runtime_cpython._raw_buffer import RawBuffer
 from rosidl_runtime_cpython.dtype import Dtype
+from rosidl_runtime_cpython.string import String, WString
 
 
 class Sequence:
@@ -241,6 +242,36 @@ class Sequence:
         if callable(clear):
             clear()
 
+    def _wrap_element(self, value: Any) -> Any:
+        """
+        Return the stored form of a Pythonic *value* for a managed object sequence.
+
+        The generated C++ size/writer walkers read string elements through
+        ``numpy()``, so a sequence must never store a bare Python ``str``: the
+        invariant is that every element is a String/WString container (matching
+        scalar string fields, which convert via ``assign()``).  ``str``/``bytes``
+        values are wrapped into a fresh unbounded container; bounded string
+        dtypes cannot be constructed without their bound, so they raise a clear
+        error instead of silently storing the raw value (which would fail later,
+        deep inside serialization).
+        """
+        if isinstance(value, (str, bytes, bytearray, memoryview)):
+            dtype = self._dtype
+            if dtype is String:
+                return String(value)
+            if dtype is WString:
+                return WString(value)
+            if isinstance(dtype, type) and issubclass(dtype, (String, WString)):
+                raise TypeError(
+                    f'cannot assign {type(value).__name__} to a '
+                    f'{dtype.__name__} sequence element: bounded string '
+                    f'elements require an explicit bound, construct '
+                    f'{dtype.__name__}(bound) yourself')
+            # Unrelated dtype (e.g. the untyped `object` sequence): store by
+            # reference, preserving the container's generic semantics.
+            return value
+        return value
+
     def _refresh_view(self) -> None:
         self._view = self._make_view()
 
@@ -300,9 +331,9 @@ class Sequence:
                     self._assign_element(self._store[i], v)
         else:
             if isinstance(index, int):
-                self._store[index] = value
+                self._store[index] = self._wrap_element(value)
             else:
-                self._view[index] = value
+                self._view[index] = [self._wrap_element(v) for v in value]
 
     def __delitem__(self, index: int | slice) -> None:
         if isinstance(index, int):
@@ -415,7 +446,7 @@ class Sequence:
             if self._element_pool is not None:
                 self._assign_element(self._store[self._size], value)
             else:
-                self._store[self._size] = value
+                self._store[self._size] = self._wrap_element(value)
             self._size += 1
             self._refresh_view()
 
@@ -445,7 +476,7 @@ class Sequence:
                     self._assign_element(self._store[self._size + i], v)
             else:
                 for i, v in enumerate(items):
-                    self._store[self._size + i] = v
+                    self._store[self._size + i] = self._wrap_element(v)
             self._size += len(items)
             self._refresh_view()
 
@@ -476,7 +507,7 @@ class Sequence:
             self._ensure_capacity(self._size + 1)
             # Shift elements right from the end to avoid overwriting.
             self._store[index + 1:self._size + 1] = self._store[index:self._size]
-            self._store[index] = value
+            self._store[index] = self._wrap_element(value)
             self._size += 1
             self._refresh_view()
 
@@ -613,7 +644,7 @@ class Sequence:
             self._store[:self._size] = None  # release previous refs
             self._ensure_capacity(len(items))
             for i, v in enumerate(items):
-                self._store[i] = v
+                self._store[i] = self._wrap_element(v)
             self._size = len(items)
             self._refresh_view()
 

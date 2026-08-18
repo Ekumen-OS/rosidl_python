@@ -30,8 +30,8 @@
 /// function pointer in a static variable — the same pattern numpy uses for
 /// its C API.
 
-#ifndef ROSIDL_RUNTIME_PY__RAW_BUFFER_H_
-#define ROSIDL_RUNTIME_PY__RAW_BUFFER_H_
+#ifndef ROSIDL_RUNTIME_CPYTHON__RAW_BUFFER_H_
+#define ROSIDL_RUNTIME_CPYTHON__RAW_BUFFER_H_
 
 #include <Python.h>
 #include "rosidl_runtime_c/experimental/memory.h"
@@ -52,7 +52,8 @@ typedef PyObject * (* RawBuffer_FromRegion_t)(const rosidl_memory_region_t *);
 /// A pointer to a static instance of this struct is stored in the capsule.
 /// Callers retrieve it with PyCapsule_Import and cast to RawBuffer_CAPI_t * —
 /// a data-pointer cast, valid in both C and C++.
-typedef struct {
+typedef struct
+{
   RawBuffer_FromRegion_t FromRegion;
 } RawBuffer_CAPI_t;
 
@@ -96,4 +97,4 @@ RawBuffer_FromRegion(const rosidl_memory_region_t * region)
 }
 #endif
 
-#endif  // ROSIDL_RUNTIME_PY__RAW_BUFFER_H_
+#endif  // ROSIDL_RUNTIME_CPYTHON__RAW_BUFFER_H_

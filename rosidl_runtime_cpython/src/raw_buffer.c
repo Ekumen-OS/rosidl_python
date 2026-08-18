@@ -59,7 +59,8 @@ static PyTypeObject RawBuffer_Type;
 // into it.  We wrap the old allocation address in a lightweight BufferGuard
 // whose sole job is to call PyMem_Free when the last reference to it drops.
 
-typedef struct {
+typedef struct
+{
   PyObject_HEAD
   void * data;
 } RawBufferGuard;
@@ -94,7 +95,8 @@ RawBufferGuard_New(void * data)
 // RawBuffer type
 // ---------------------------------------------------------------------------
 
-typedef struct {
+typedef struct
+{
   PyObject_HEAD
 
   // The underlying memory region.
@@ -222,7 +224,8 @@ RawBuffer_init(RawBuffer * self, PyObject * args, PyObject * kwargs)
   PyObject * growing_obj = NULL;
 
   if (!PyArg_ParseTupleAndKeywords(
-      args, kwargs, "|OO", kwlist, &data_obj, &growing_obj)) {
+      args, kwargs, "|OO", kwlist, &data_obj, &growing_obj))
+  {
     return -1;
   }
 
@@ -543,7 +546,7 @@ RawBuffer_mp_ass_subscript(RawBuffer * self, PyObject * key, PyObject * value)
     PyErr_SetString(PyExc_TypeError, "RawBuffer values must be integers (0-255)");
     return -1;
   }
-  long v = PyLong_AsLong(value);
+  long v = PyLong_AsLong(value);  // NOLINT(runtime/int)
   if (v == -1 && PyErr_Occurred()) {
     return -1;
   }

@@ -21,9 +21,9 @@
 /// typesupports import this module rather than re-implementing the C API
 /// import and wrap themselves.
 
-#include <cstdint>
-
 #include <pybind11/pybind11.h>
+
+#include <cstdint>
 
 #include "rosidl_runtime_c/experimental/memory.h"
 #include "rosidl_runtime_cpython/raw_buffer.h"

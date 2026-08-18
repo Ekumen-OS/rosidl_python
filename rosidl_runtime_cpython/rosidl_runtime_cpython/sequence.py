@@ -275,6 +275,24 @@ class Sequence:
     def _refresh_view(self) -> None:
         self._view = self._make_view()
 
+    def _coerce_primitive(self, values: Any) -> npt.NDArray[Any]:
+        """
+        Convert *values* to a numpy array without per-element Python iteration.
+
+        ``bytes``/``bytearray``/``memoryview`` map directly over their memory
+        via :func:`np.frombuffer`; numpy arrays are reused (cast when the
+        dtype differs); anything else falls back to ``np.asarray``.  This
+        avoids the Python-level ``list(values)`` loop that dominates the cost
+        of bulk-assigning large byte payloads.
+        """
+        if isinstance(values, (bytes, bytearray, memoryview)):
+            return np.frombuffer(values, dtype=self._dtype.numpy_dtype)
+        if isinstance(values, np.ndarray):
+            if values.dtype == self._dtype.numpy_dtype:
+                return values
+            return values.astype(self._dtype.numpy_dtype)
+        return np.asarray(list(values), dtype=self._dtype.numpy_dtype)
+
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
@@ -458,18 +476,19 @@ class Sequence:
         backing (e.g. a type mismatch in pool mode), elements before the
         failure may already have been written (partial mutation).
         """
-        items = list(values)
-        self._check_bound(self._size + len(items))
         if self._is_primitive:
-            self._ensure_capacity(self._size + len(items))
-            new_size = self._size + len(items)
+            arr = self._coerce_primitive(values)
+            self._check_bound(self._size + len(arr))
+            self._ensure_capacity(self._size + len(arr))
+            new_size = self._size + len(arr)
             self._resize_buffer(new_size * self._dtype.itemsize)
             old_size = self._size
             self._size = new_size
             self._refresh_view()
-            for i, v in enumerate(items):
-                self._view[old_size + i] = v
+            self._view[old_size:new_size] = arr
         else:
+            items = list(values)
+            self._check_bound(self._size + len(items))
             self._ensure_capacity(self._size + len(items))
             if self._element_pool is not None:
                 for i, v in enumerate(items):
@@ -622,16 +641,18 @@ class Sequence:
         backing (e.g. a type mismatch in pool mode), elements before the
         failure may already have been written (partial mutation).
         """
-        items = list(values)
-        self._check_bound(len(items))
         if self._is_primitive:
-            self._ensure_capacity(len(items))
-            self._resize_buffer(len(items) * self._dtype.itemsize)
-            self._size = len(items)
+            arr = self._coerce_primitive(values)
+            self._check_bound(len(arr))
+            self._ensure_capacity(len(arr))
+            self._resize_buffer(len(arr) * self._dtype.itemsize)
+            self._size = len(arr)
             self._refresh_view()
-            if items:
-                self._view[:] = items
+            if len(arr):
+                self._view[:] = arr
         elif self._element_pool is not None:
+            items = list(values)
+            self._check_bound(len(items))
             self._ensure_capacity(len(items))
             old_size = self._size
             for i, v in enumerate(items):
@@ -641,6 +662,8 @@ class Sequence:
             self._size = len(items)
             self._refresh_view()
         else:
+            items = list(values)
+            self._check_bound(len(items))
             self._store[:self._size] = None  # release previous refs
             self._ensure_capacity(len(items))
             for i, v in enumerate(items):

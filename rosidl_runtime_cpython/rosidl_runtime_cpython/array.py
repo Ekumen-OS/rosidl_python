@@ -16,13 +16,15 @@
 
 from __future__ import annotations
 
+import numbers
 from typing import Any, Iterator
 
 import numpy as np
 import numpy.typing as npt
 
-from rosidl_runtime_cpython.dtype import Dtype
 from rosidl_runtime_cpython._raw_buffer import RawBuffer
+from rosidl_runtime_cpython.dtype import Dtype, dtype_from_numpy
+from rosidl_runtime_cpython.scalar import Scalar
 
 
 class Array:
@@ -204,6 +206,218 @@ class Array:
             return bool(np.array_equal(self._view, other))
         except (TypeError, ValueError):
             return NotImplemented  # type: ignore[return-value]
+
+    # ------------------------------------------------------------------
+    # Arithmetic (numpy.ndarray element-wise semantics)
+    # ------------------------------------------------------------------
+
+    def _check_primitive(self) -> None:
+        if not self._is_primitive:
+            raise TypeError('arithmetic is not supported for object-typed arrays')
+
+    def _coerce_operand(self, other: Any) -> Any:
+        """
+        Return the numpy operand for element-wise arithmetic, or ``NotImplemented``.
+
+        Accepts :class:`Array` (its view), :class:`Scalar` (its length-1 view,
+        which broadcasts), numpy arrays, ``list``/``tuple`` (converted via
+        :func:`np.asarray`), and any :class:`numbers.Number`.
+        """
+        if isinstance(other, Array):
+            return other._view
+        if isinstance(other, Scalar):
+            return other._view
+        if isinstance(other, np.ndarray):
+            return other
+        if isinstance(other, (list, tuple)):
+            return np.asarray(other)
+        if isinstance(other, numbers.Number):
+            return other
+        return NotImplemented
+
+    def _wrap_result(self, result: Any) -> Array:
+        """Wrap a 1-D numpy result array into a new managed Array."""
+        result = np.asarray(result)
+        if result.ndim != 1:
+            raise TypeError(
+                f'Array arithmetic must produce a 1-D result, got shape '
+                f'{result.shape}')
+        dtype = dtype_from_numpy(result.dtype)
+        if dtype is None:
+            raise TypeError(
+                f'unsupported result dtype {result.dtype} for Array arithmetic')
+        return Array(dtype, len(result), data=result)
+
+    def _binary(self, other: Any, op: Any) -> Array | Any:
+        """Compute ``op(self, other)`` element-wise, returning a new Array."""
+        self._check_primitive()
+        operand = self._coerce_operand(other)
+        if operand is NotImplemented:
+            return NotImplemented
+        return self._wrap_result(op(self._view, operand))
+
+    def _rbinary(self, other: Any, op: Any) -> Array | Any:
+        """Compute ``op(other, self)`` element-wise, returning a new Array."""
+        self._check_primitive()
+        operand = self._coerce_operand(other)
+        if operand is NotImplemented:
+            return NotImplemented
+        return self._wrap_result(op(operand, self._view))
+
+    def _inplace(self, other: Any, op: Any) -> Array | Any:
+        """
+        Apply ``op`` element-wise in place, writing into the existing buffer.
+
+        Follows numpy's in-place casting rules: an operation that would lose
+        precision (e.g. float into an integer array) raises
+        :exc:`numpy.core._exceptions._UFuncOutputCastingError`.
+        """
+        self._check_primitive()
+        operand = self._coerce_operand(other)
+        if operand is NotImplemented:
+            return NotImplemented
+        op(self._view, operand, out=self._view)
+        return self
+
+    # ------------------------------------------------------------------
+    # Binary arithmetic
+    # ------------------------------------------------------------------
+
+    def __add__(self, other: Any) -> Array | Any:
+        return self._binary(other, np.add)
+
+    def __radd__(self, other: Any) -> Array | Any:
+        return self._rbinary(other, np.add)
+
+    def __sub__(self, other: Any) -> Array | Any:
+        return self._binary(other, np.subtract)
+
+    def __rsub__(self, other: Any) -> Array | Any:
+        return self._rbinary(other, np.subtract)
+
+    def __mul__(self, other: Any) -> Array | Any:
+        return self._binary(other, np.multiply)
+
+    def __rmul__(self, other: Any) -> Array | Any:
+        return self._rbinary(other, np.multiply)
+
+    def __truediv__(self, other: Any) -> Array | Any:
+        return self._binary(other, np.true_divide)
+
+    def __rtruediv__(self, other: Any) -> Array | Any:
+        return self._rbinary(other, np.true_divide)
+
+    def __floordiv__(self, other: Any) -> Array | Any:
+        return self._binary(other, np.floor_divide)
+
+    def __rfloordiv__(self, other: Any) -> Array | Any:
+        return self._rbinary(other, np.floor_divide)
+
+    def __mod__(self, other: Any) -> Array | Any:
+        return self._binary(other, np.mod)
+
+    def __rmod__(self, other: Any) -> Array | Any:
+        return self._rbinary(other, np.mod)
+
+    def __pow__(self, other: Any) -> Array | Any:
+        return self._binary(other, np.power)
+
+    def __rpow__(self, other: Any) -> Array | Any:
+        return self._rbinary(other, np.power)
+
+    # ------------------------------------------------------------------
+    # Bitwise arithmetic
+    # ------------------------------------------------------------------
+
+    def __and__(self, other: Any) -> Array | Any:
+        return self._binary(other, np.bitwise_and)
+
+    def __rand__(self, other: Any) -> Array | Any:
+        return self._rbinary(other, np.bitwise_and)
+
+    def __or__(self, other: Any) -> Array | Any:
+        return self._binary(other, np.bitwise_or)
+
+    def __ror__(self, other: Any) -> Array | Any:
+        return self._rbinary(other, np.bitwise_or)
+
+    def __xor__(self, other: Any) -> Array | Any:
+        return self._binary(other, np.bitwise_xor)
+
+    def __rxor__(self, other: Any) -> Array | Any:
+        return self._rbinary(other, np.bitwise_xor)
+
+    def __lshift__(self, other: Any) -> Array | Any:
+        return self._binary(other, np.left_shift)
+
+    def __rlshift__(self, other: Any) -> Array | Any:
+        return self._rbinary(other, np.left_shift)
+
+    def __rshift__(self, other: Any) -> Array | Any:
+        return self._binary(other, np.right_shift)
+
+    def __rrshift__(self, other: Any) -> Array | Any:
+        return self._rbinary(other, np.right_shift)
+
+    # ------------------------------------------------------------------
+    # Unary arithmetic
+    # ------------------------------------------------------------------
+
+    def __neg__(self) -> Array:
+        self._check_primitive()
+        return self._wrap_result(np.negative(self._view))
+
+    def __pos__(self) -> Array:
+        self._check_primitive()
+        return self._wrap_result(np.positive(self._view))
+
+    def __abs__(self) -> Array:
+        self._check_primitive()
+        return self._wrap_result(np.abs(self._view))
+
+    def __invert__(self) -> Array:
+        self._check_primitive()
+        return self._wrap_result(np.invert(self._view))
+
+    # ------------------------------------------------------------------
+    # In-place arithmetic
+    # ------------------------------------------------------------------
+
+    def __iadd__(self, other: Any) -> Array | Any:
+        return self._inplace(other, np.add)
+
+    def __isub__(self, other: Any) -> Array | Any:
+        return self._inplace(other, np.subtract)
+
+    def __imul__(self, other: Any) -> Array | Any:
+        return self._inplace(other, np.multiply)
+
+    def __itruediv__(self, other: Any) -> Array | Any:
+        return self._inplace(other, np.true_divide)
+
+    def __ifloordiv__(self, other: Any) -> Array | Any:
+        return self._inplace(other, np.floor_divide)
+
+    def __imod__(self, other: Any) -> Array | Any:
+        return self._inplace(other, np.mod)
+
+    def __ipow__(self, other: Any) -> Array | Any:
+        return self._inplace(other, np.power)
+
+    def __iand__(self, other: Any) -> Array | Any:
+        return self._inplace(other, np.bitwise_and)
+
+    def __ior__(self, other: Any) -> Array | Any:
+        return self._inplace(other, np.bitwise_or)
+
+    def __ixor__(self, other: Any) -> Array | Any:
+        return self._inplace(other, np.bitwise_xor)
+
+    def __ilshift__(self, other: Any) -> Array | Any:
+        return self._inplace(other, np.left_shift)
+
+    def __irshift__(self, other: Any) -> Array | Any:
+        return self._inplace(other, np.right_shift)
 
     # ------------------------------------------------------------------
     # Buffer / numpy protocols

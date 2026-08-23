@@ -84,3 +84,33 @@ class Dtype(enum.Enum):
     def unpack(self, data: bytes | bytearray) -> Any:
         """Unpack a single Python value from its raw byte representation."""
         return np.frombuffer(data, dtype=self.numpy_dtype, count=1)[0].item()
+
+
+# Canonical numpy dtype -> Dtype mapping used to resolve the result dtype of
+# arithmetic operations.  Ambiguous aliases (CHAR/BYTE -> uint8, WCHAR -> uint16)
+# resolve to the canonical numeric member: arithmetic on a char scalar produces
+# a numeric result, not a character type.
+_NUMPY_DTYPE_TO_DTYPE: dict[np.dtype, Dtype] = {
+    np.dtype('bool'): Dtype.BOOL,
+    np.dtype('uint8'): Dtype.UINT8,
+    np.dtype('uint16'): Dtype.UINT16,
+    np.dtype('uint32'): Dtype.UINT32,
+    np.dtype('uint64'): Dtype.UINT64,
+    np.dtype('int8'): Dtype.INT8,
+    np.dtype('int16'): Dtype.INT16,
+    np.dtype('int32'): Dtype.INT32,
+    np.dtype('int64'): Dtype.INT64,
+    np.dtype('float32'): Dtype.FLOAT32,
+    np.dtype('float64'): Dtype.FLOAT64,
+    np.dtype('longdouble'): Dtype.LONG_DOUBLE,
+}
+
+
+def dtype_from_numpy(numpy_dtype: npt.DTypeLike) -> Dtype | None:
+    """
+    Return the canonical :class:`Dtype` for *numpy_dtype*, or ``None``.
+
+    Used to resolve the result dtype of arithmetic operations.  ``None`` is
+    returned for dtypes with no ROS equivalent (e.g. ``object``, ``complex``).
+    """
+    return _NUMPY_DTYPE_TO_DTYPE.get(np.dtype(numpy_dtype))

@@ -302,3 +302,219 @@ def test_repr_object():
     r = repr(a)
     assert 'Array(' in r
     assert 'data=' in r
+
+
+# ---------------------------------------------------------------------------
+# Arithmetic — element-wise (numpy.ndarray semantics)
+# ---------------------------------------------------------------------------
+
+def test_add_array():
+    r = Array(Dtype.INT32, 3, data=[1, 2, 3]) + Array(Dtype.INT32, 3, data=[10, 20, 30])
+    assert isinstance(r, Array)
+    assert r.dtype is Dtype.INT32
+    assert list(r) == [11, 22, 33]
+
+
+def test_add_scalar():
+    r = Array(Dtype.INT32, 3, data=[1, 2, 3]) + 1
+    assert isinstance(r, Array)
+    assert r.dtype is Dtype.INT32
+    assert list(r) == [2, 3, 4]
+
+
+def test_radd_scalar():
+    r = 1 + Array(Dtype.INT32, 3, data=[1, 2, 3])
+    assert list(r) == [2, 3, 4]
+
+
+def test_add_rosidl_scalar():
+    from rosidl_runtime_cpython.scalar import Scalar
+    r = Array(Dtype.INT32, 3, data=[1, 2, 3]) + Scalar(Dtype.INT32, 5)
+    assert isinstance(r, Array)
+    assert list(r) == [6, 7, 8]
+
+
+def test_add_list():
+    r = Array(Dtype.INT32, 3, data=[1, 2, 3]) + [10, 20, 30]
+    assert list(r) == [11, 22, 33]
+
+
+def test_add_ndarray():
+    r = Array(Dtype.INT32, 3, data=[1, 2, 3]) + np.array([10, 20, 30])
+    assert list(r) == [11, 22, 33]
+
+
+def test_sub():
+    assert list(Array(Dtype.INT32, 2, data=[5, 7]) - 2) == [3, 5]
+    assert list(2 - Array(Dtype.INT32, 2, data=[5, 7])) == [-3, -5]
+
+
+def test_mul():
+    assert list(Array(Dtype.INT32, 2, data=[5, 7]) * 2) == [10, 14]
+    assert list(2 * Array(Dtype.INT32, 2, data=[5, 7])) == [10, 14]
+
+
+def test_truediv_promotes_to_float():
+    r = Array(Dtype.INT32, 2, data=[5, 7]) / 2
+    assert r.dtype is Dtype.FLOAT64
+    assert list(r) == [2.5, 3.5]
+
+
+def test_floordiv():
+    assert list(Array(Dtype.INT32, 2, data=[5, 7]) // 2) == [2, 3]
+
+
+def test_mod():
+    assert list(Array(Dtype.INT32, 2, data=[5, 7]) % 2) == [1, 1]
+
+
+def test_pow():
+    assert list(Array(Dtype.INT32, 2, data=[2, 3]) ** 2) == [4, 9]
+
+
+def test_promote_dtype():
+    r = Array(Dtype.INT32, 3, data=[1, 2, 3]) + Array(Dtype.FLOAT64, 3, data=[0.5, 0.5, 0.5])
+    assert r.dtype is Dtype.FLOAT64
+    assert list(r) == [1.5, 2.5, 3.5]
+
+
+def test_bitwise_and():
+    assert list(Array(Dtype.INT32, 2, data=[12, 6]) & 10) == [8, 2]
+
+
+def test_bitwise_or():
+    assert list(Array(Dtype.INT32, 2, data=[12, 6]) | 3) == [15, 7]
+
+
+def test_bitwise_xor():
+    assert list(Array(Dtype.INT32, 2, data=[12, 6]) ^ 10) == [6, 12]
+
+
+def test_lshift():
+    assert list(Array(Dtype.INT32, 2, data=[1, 2]) << 3) == [8, 16]
+
+
+def test_rshift():
+    assert list(Array(Dtype.INT32, 2, data=[16, 32]) >> 2) == [4, 8]
+
+
+def test_neg():
+    r = -Array(Dtype.INT32, 2, data=[1, -2])
+    assert isinstance(r, Array)
+    assert list(r) == [-1, 2]
+
+
+def test_pos():
+    assert list(+Array(Dtype.INT32, 2, data=[1, -2])) == [1, -2]
+
+
+def test_abs():
+    r = abs(Array(Dtype.INT32, 2, data=[1, -2]))
+    assert isinstance(r, Array)
+    assert list(r) == [1, 2]
+
+
+def test_invert():
+    r = ~Array(Dtype.INT32, 2, data=[5, 0])
+    assert isinstance(r, Array)
+    assert list(r) == [-6, -1]
+
+
+def test_broadcast_error_raises():
+    with pytest.raises(ValueError):
+        Array(Dtype.INT32, 3, data=[1, 2, 3]) + Array(Dtype.INT32, 2, data=[1, 2])
+
+
+def test_object_mode_arithmetic_raises():
+    with pytest.raises(TypeError, match='object-typed'):
+        Array(object, 2) + 1
+
+
+def test_add_unsupported_type_raises():
+    with pytest.raises(TypeError):
+        Array(Dtype.INT32, 2) + 'x'
+
+
+# ---------------------------------------------------------------------------
+# Arithmetic — in-place (numpy casting rules)
+# ---------------------------------------------------------------------------
+
+def test_iadd_returns_self():
+    a = Array(Dtype.INT32, 3, data=[1, 2, 3])
+    r = a.__iadd__(1)
+    assert r is a
+    assert list(a) == [2, 3, 4]
+
+
+def test_iadd_python_syntax():
+    a = Array(Dtype.INT32, 3, data=[1, 2, 3])
+    a += 1
+    assert list(a) == [2, 3, 4]
+
+
+def test_iadd_array():
+    a = Array(Dtype.INT32, 3, data=[1, 2, 3])
+    a += Array(Dtype.INT32, 3, data=[10, 20, 30])
+    assert list(a) == [11, 22, 33]
+
+
+def test_isub():
+    a = Array(Dtype.INT32, 2, data=[5, 7])
+    a -= 2
+    assert list(a) == [3, 5]
+
+
+def test_imul():
+    a = Array(Dtype.INT32, 2, data=[5, 7])
+    a *= 2
+    assert list(a) == [10, 14]
+
+
+def test_ifloordiv():
+    a = Array(Dtype.INT32, 2, data=[5, 7])
+    a //= 2
+    assert list(a) == [2, 3]
+
+
+def test_imod():
+    a = Array(Dtype.INT32, 2, data=[5, 7])
+    a %= 2
+    assert list(a) == [1, 1]
+
+
+def test_ilshift():
+    a = Array(Dtype.INT32, 2, data=[1, 2])
+    a <<= 3
+    assert list(a) == [8, 16]
+
+
+def test_irshift():
+    a = Array(Dtype.INT32, 2, data=[16, 32])
+    a >>= 2
+    assert list(a) == [4, 8]
+
+
+def test_iand():
+    a = Array(Dtype.INT32, 2, data=[12, 6])
+    a &= 10
+    assert list(a) == [8, 2]
+
+
+def test_ior():
+    a = Array(Dtype.INT32, 2, data=[12, 6])
+    a |= 3
+    assert list(a) == [15, 7]
+
+
+def test_ixor():
+    a = Array(Dtype.INT32, 2, data=[12, 6])
+    a ^= 10
+    assert list(a) == [6, 12]
+
+
+def test_iadd_unsafe_cast_raises():
+    # numpy in-place semantics: float into an int array raises.
+    a = Array(Dtype.INT32, 2, data=[1, 2])
+    with pytest.raises(Exception):
+        a += 0.5
+    assert list(a) == [1, 2]  # unchanged after the failed op

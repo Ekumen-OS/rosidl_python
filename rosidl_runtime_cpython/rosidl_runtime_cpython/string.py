@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import operator
 from typing import Any, Iterator
 
 import numpy as np
@@ -285,6 +286,62 @@ class String:
         self._resize_buffer(0)
         self._size = 0
         self._refresh_view()
+
+    # ------------------------------------------------------------------
+    # Arithmetic (concatenation / repetition)
+    # ------------------------------------------------------------------
+
+    def __add__(self, other: Any) -> String | Any:
+        """
+        Concatenate with another String or a ``str``.
+
+        The result is always a new managed :class:`String`; a bound on a
+        :class:`BoundedString` operand is not preserved.
+        """
+        if isinstance(other, String):
+            return String(self._view.tobytes() + other._view.tobytes())
+        if isinstance(other, str):
+            return String(self._view.tobytes() + other.encode('utf-8'))
+        return NotImplemented
+
+    def __radd__(self, other: Any) -> String | Any:
+        if isinstance(other, str):
+            return String(other.encode('utf-8') + self._view.tobytes())
+        return NotImplemented
+
+    def __mul__(self, other: Any) -> String | Any:
+        """Repeat the contents *other* times (``str * int`` semantics)."""
+        try:
+            n = operator.index(other)
+        except TypeError:
+            return NotImplemented
+        return String(self._view.tobytes() * n)
+
+    def __rmul__(self, other: Any) -> String | Any:
+        try:
+            n = operator.index(other)
+        except TypeError:
+            return NotImplemented
+        return String(self._view.tobytes() * n)
+
+    def __iadd__(self, other: Any) -> String | Any:
+        """Append *other* in place (respects a bound on bounded strings)."""
+        if isinstance(other, String):
+            self.append_str(other._view.tobytes())
+            return self
+        if isinstance(other, str):
+            self.append_str(other)
+            return self
+        return NotImplemented
+
+    def __imul__(self, other: Any) -> String | Any:
+        """Repeat the contents in place (respects a bound on bounded strings)."""
+        try:
+            n = operator.index(other)
+        except TypeError:
+            return NotImplemented
+        self.assign(self._view.tobytes() * n)
+        return self
 
     # ------------------------------------------------------------------
     # String conversion
@@ -579,6 +636,62 @@ class WString:
         self._resize_buffer(0)
         self._size = 0
         self._refresh_view()
+
+    # ------------------------------------------------------------------
+    # Arithmetic (concatenation / repetition)
+    # ------------------------------------------------------------------
+
+    def __add__(self, other: Any) -> WString | Any:
+        """
+        Concatenate with another WString or a ``str``.
+
+        The result is always a new managed :class:`WString`; a bound on a
+        :class:`BoundedWString` operand is not preserved.
+        """
+        if isinstance(other, WString):
+            return WString(self._view.tobytes() + other._view.tobytes())
+        if isinstance(other, str):
+            return WString(self._view.tobytes() + other.encode('utf-16-le'))
+        return NotImplemented
+
+    def __radd__(self, other: Any) -> WString | Any:
+        if isinstance(other, str):
+            return WString(other.encode('utf-16-le') + self._view.tobytes())
+        return NotImplemented
+
+    def __mul__(self, other: Any) -> WString | Any:
+        """Repeat the contents *other* times (``str * int`` semantics)."""
+        try:
+            n = operator.index(other)
+        except TypeError:
+            return NotImplemented
+        return WString(self._view.tobytes() * n)
+
+    def __rmul__(self, other: Any) -> WString | Any:
+        try:
+            n = operator.index(other)
+        except TypeError:
+            return NotImplemented
+        return WString(self._view.tobytes() * n)
+
+    def __iadd__(self, other: Any) -> WString | Any:
+        """Append *other* in place (respects a bound on bounded strings)."""
+        if isinstance(other, WString):
+            self.append_str(other._view.tobytes())
+            return self
+        if isinstance(other, str):
+            self.append_str(other)
+            return self
+        return NotImplemented
+
+    def __imul__(self, other: Any) -> WString | Any:
+        """Repeat the contents in place (respects a bound on bounded strings)."""
+        try:
+            n = operator.index(other)
+        except TypeError:
+            return NotImplemented
+        self.assign(self._view.tobytes() * n)
+        return self
 
     # ------------------------------------------------------------------
     # String conversion

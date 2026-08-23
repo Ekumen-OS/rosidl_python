@@ -928,3 +928,215 @@ def test_object_bounded_string_sequence_rejects_bare_str():
     with pytest.raises(TypeError, match='bound'):
         s.append('a')
     assert len(s) == 0
+
+
+# ---------------------------------------------------------------------------
+# Arithmetic — concatenation
+# ---------------------------------------------------------------------------
+
+def test_add_sequence():
+    r = Sequence(Dtype.INT32, data=[1, 2]) + Sequence(Dtype.INT32, data=[3, 4])
+    assert isinstance(r, Sequence)
+    assert r.dtype is Dtype.INT32
+    assert list(r) == [1, 2, 3, 4]
+
+
+def test_add_list():
+    r = Sequence(Dtype.INT32, data=[1, 2]) + [3, 4]
+    assert isinstance(r, Sequence)
+    assert r.dtype is Dtype.INT32
+    assert list(r) == [1, 2, 3, 4]
+
+
+def test_radd_list():
+    r = [1, 2] + Sequence(Dtype.INT32, data=[3, 4])
+    assert isinstance(r, Sequence)
+    assert r.dtype is Dtype.INT32
+    assert list(r) == [1, 2, 3, 4]
+
+
+def test_add_empty():
+    assert list(Sequence(Dtype.INT32) + [1, 2]) == [1, 2]
+    assert list(Sequence(Dtype.INT32, data=[1, 2]) + []) == [1, 2]
+    assert list(Sequence(Dtype.INT32) + Sequence(Dtype.INT32)) == []
+
+
+def test_add_returns_new_sequence():
+    a = Sequence(Dtype.INT32, data=[1, 2])
+    b = a + [3]
+    assert list(a) == [1, 2]  # original unchanged
+    assert list(b) == [1, 2, 3]
+
+
+def test_add_promotes_dtype():
+    r = Sequence(Dtype.INT32, data=[1, 2]) + Sequence(Dtype.FLOAT64, data=[3.5])
+    assert r.dtype is Dtype.FLOAT64
+    assert list(r) == [1.0, 2.0, 3.5]
+
+
+def test_add_tuple_raises():
+    # list + tuple raises TypeError; Sequence mirrors that.
+    with pytest.raises(TypeError):
+        Sequence(Dtype.INT32, data=[1, 2]) + (3, 4)
+
+
+def test_add_primitive_object_mixed_raises():
+    with pytest.raises(TypeError, match='primitive and object'):
+        Sequence(Dtype.INT32) + Sequence(String)
+
+
+def test_add_object_dtype_mismatch_raises():
+    with pytest.raises(TypeError, match='cannot concatenate'):
+        Sequence(String) + Sequence(list)
+
+
+def test_add_object_sequence():
+    r = Sequence(String, data=['a', 'b']) + Sequence(String, data=['c'])
+    assert r.dtype is String
+    assert [str(e) for e in r] == ['a', 'b', 'c']
+
+
+def test_add_object_list_wraps_str():
+    r = Sequence(String, data=['a']) + ['b']
+    assert all(isinstance(e, String) for e in r)
+    assert [str(e) for e in r] == ['a', 'b']
+
+
+# ---------------------------------------------------------------------------
+# Arithmetic — repetition
+# ---------------------------------------------------------------------------
+
+def test_mul():
+    r = Sequence(Dtype.INT32, data=[1, 2]) * 3
+    assert isinstance(r, Sequence)
+    assert r.dtype is Dtype.INT32
+    assert list(r) == [1, 2, 1, 2, 1, 2]
+
+
+def test_rmul():
+    r = 3 * Sequence(Dtype.INT32, data=[1, 2])
+    assert list(r) == [1, 2, 1, 2, 1, 2]
+
+
+def test_mul_zero():
+    assert list(Sequence(Dtype.INT32, data=[1, 2]) * 0) == []
+
+
+def test_mul_negative():
+    assert list(Sequence(Dtype.INT32, data=[1, 2]) * -1) == []
+
+
+def test_mul_non_int_raises():
+    with pytest.raises(TypeError):
+        Sequence(Dtype.INT32, data=[1, 2]) * 2.5
+
+
+def test_mul_object_mode():
+    r = Sequence(String, data=['a']) * 2
+    assert [str(e) for e in r] == ['a', 'a']
+
+
+# ---------------------------------------------------------------------------
+# Arithmetic — in-place
+# ---------------------------------------------------------------------------
+
+def test_iadd_list():
+    s = Sequence(Dtype.INT32, data=[1, 2])
+    r = s.__iadd__([3, 4])
+    assert r is s
+    assert list(s) == [1, 2, 3, 4]
+
+
+def test_iadd_sequence():
+    s = Sequence(Dtype.INT32, data=[1, 2])
+    s += Sequence(Dtype.INT32, data=[3, 4])
+    assert list(s) == [1, 2, 3, 4]
+
+
+def test_iadd_python_syntax():
+    s = Sequence(Dtype.INT32, data=[1, 2])
+    s += [3]
+    assert list(s) == [1, 2, 3]
+
+
+def test_imul():
+    s = Sequence(Dtype.INT32, data=[1, 2])
+    r = s.__imul__(3)
+    assert r is s
+    assert list(s) == [1, 2, 1, 2, 1, 2]
+
+
+def test_imul_python_syntax():
+    s = Sequence(Dtype.INT32, data=[1, 2])
+    s *= 2
+    assert list(s) == [1, 2, 1, 2]
+
+
+def test_imul_zero():
+    s = Sequence(Dtype.INT32, data=[1, 2])
+    s *= 0
+    assert list(s) == []
+
+
+def test_iadd_object_mode():
+    s = Sequence(String, data=['a'])
+    s += ['b']
+    assert [str(e) for e in s] == ['a', 'b']
+
+
+# ---------------------------------------------------------------------------
+# Arithmetic — bounded sequences
+# ---------------------------------------------------------------------------
+
+def test_bounded_add_loses_bound():
+    r = BoundedSequence(Dtype.INT32, 2, data=[1, 2]) + [3]
+    assert type(r) is Sequence  # bound is not preserved
+    assert list(r) == [1, 2, 3]
+
+
+def test_bounded_mul_loses_bound():
+    r = BoundedSequence(Dtype.INT32, 2, data=[1, 2]) * 2
+    assert type(r) is Sequence
+    assert list(r) == [1, 2, 1, 2]
+
+
+def test_bounded_iadd_respects_bound():
+    s = BoundedSequence(Dtype.INT32, 2, data=[1, 2])
+    with pytest.raises(ValueError, match='upper bound'):
+        s += [3]
+
+
+def test_bounded_imul_respects_bound():
+    s = BoundedSequence(Dtype.INT32, 3, data=[1, 2])
+    with pytest.raises(ValueError, match='upper bound'):
+        s *= 2  # 4 elements > 3
+
+
+def test_mul_numpy_int():
+    # numpy integers are accepted via operator.index (like Python's str * np.int64).
+    r = Sequence(Dtype.INT32, data=[1, 2]) * np.int64(2)
+    assert list(r) == [1, 2, 1, 2]
+
+
+def test_imul_pool_preserves_content():
+    # Regression: pool elements are wiped in place by clear(); __imul__ must
+    # snapshot deep copies before clearing so the repetition keeps the data.
+    pool = make_string_pool(4)
+    s = Sequence(String, element_pool=pool)
+    s.assign(['a', 'b'])
+    s *= 2
+    assert [str(e) for e in s] == ['a', 'b', 'a', 'b']
+    assert s[0] is pool[0]
+    assert s[1] is pool[1]
+    assert s[2] is pool[2]
+    assert s[3] is pool[3]
+
+
+def test_imul_pool_bounded_checks_bound_before_mutating():
+    # Regression: the bound must be checked before clear() wipes the pool.
+    pool = make_string_pool(4)
+    s = BoundedSequence(String, 3, element_pool=pool)
+    s.assign(['a', 'b'])
+    with pytest.raises(ValueError, match='upper bound'):
+        s *= 2  # 4 elements > bound 3
+    assert [str(e) for e in s] == ['a', 'b']  # content preserved

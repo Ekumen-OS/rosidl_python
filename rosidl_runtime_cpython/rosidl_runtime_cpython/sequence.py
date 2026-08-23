@@ -17,13 +17,14 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
+import operator
 from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 
 from rosidl_runtime_cpython._raw_buffer import RawBuffer
-from rosidl_runtime_cpython.dtype import Dtype
+from rosidl_runtime_cpython.dtype import Dtype, dtype_from_numpy
 from rosidl_runtime_cpython.string import String, WString
 
 
@@ -438,6 +439,115 @@ class Sequence:
             return bool(np.array_equal(self._view, other))
         except (TypeError, ValueError):
             return NotImplemented  # type: ignore[return-value]
+
+    # ------------------------------------------------------------------
+    # Arithmetic (concatenation / repetition)
+    # ------------------------------------------------------------------
+
+    def _concat_primitive(self, other: Sequence) -> Sequence:
+        """Concatenate two primitive sequences, promoting dtypes via numpy."""
+        result_dtype = dtype_from_numpy(
+            np.result_type(self._dtype.numpy_dtype, other._dtype.numpy_dtype))
+        if result_dtype is None:
+            raise TypeError(
+                f'unsupported result dtype for concatenating '
+                f'{self._dtype!r} and {other._dtype!r}')
+        combined = np.concatenate(
+            [self._view, other._view]).astype(result_dtype.numpy_dtype)
+        return Sequence(result_dtype, data=combined)
+
+    def __add__(self, other: Any) -> Sequence | Any:
+        """
+        Concatenate with another Sequence or a ``list``.
+
+        The result is always a new managed :class:`Sequence`; a bound on a
+        :class:`BoundedSequence` operand is not preserved.  Primitive
+        sequences promote dtypes via numpy rules; object sequences require
+        matching dtypes.
+        """
+        if isinstance(other, Sequence):
+            if self._is_primitive and other._is_primitive:
+                return self._concat_primitive(other)
+            if not self._is_primitive and not other._is_primitive:
+                if self._dtype != other._dtype:
+                    raise TypeError(
+                        f'cannot concatenate Sequence({self._dtype.__name__}) '
+                        f'with Sequence({other._dtype.__name__})')
+                result = Sequence(self._dtype)
+                result.extend(list(self))
+                result.extend(list(other))
+                return result
+            raise TypeError(
+                f'cannot concatenate primitive and object sequences '
+                f'({self._dtype!r} and {other._dtype!r})')
+        if isinstance(other, list):
+            result = Sequence(self._dtype)
+            result.extend(list(self))
+            result.extend(other)
+            return result
+        return NotImplemented
+
+    def __radd__(self, other: Any) -> Sequence | Any:
+        if isinstance(other, list):
+            result = Sequence(self._dtype)
+            result.extend(other)
+            result.extend(list(self))
+            return result
+        return NotImplemented
+
+    def __mul__(self, other: Any) -> Sequence | Any:
+        """Repeat the elements *other* times (``list * int`` semantics)."""
+        try:
+            n = operator.index(other)
+        except TypeError:
+            return NotImplemented
+        if self._is_primitive:
+            if n <= 0:
+                return Sequence(self._dtype)
+            combined = np.tile(self._view, n)
+            return Sequence(self._dtype, data=combined)
+        result = Sequence(self._dtype)
+        items = list(self)
+        for _ in range(n):
+            result.extend(items)
+        return result
+
+    def __rmul__(self, other: Any) -> Sequence | Any:
+        return self.__mul__(other)
+
+    def __iadd__(self, other: Any) -> Sequence | Any:
+        """Extend in place with another Sequence or a ``list``."""
+        if isinstance(other, Sequence):
+            self.extend(list(other))
+            return self
+        if isinstance(other, list):
+            self.extend(other)
+            return self
+        return NotImplemented
+
+    def __imul__(self, other: Any) -> Sequence | Any:
+        """Repeat the elements in place (respects a bound on bounded sequences)."""
+        try:
+            n = operator.index(other)
+        except TypeError:
+            return NotImplemented
+        if self._is_primitive:
+            if n <= 0:
+                self.clear()
+            else:
+                self.assign(np.tile(self._view, n))
+        else:
+            items = list(self)
+            if self._element_pool is not None:
+                # Pool elements are wiped in place by clear(); snapshot deep
+                # copies first so the repetition preserves the content.
+                from rosidl_runtime_cpython.copy import _element_copy
+                items = [_element_copy(e, self._dtype) for e in items]
+            self._check_bound(len(items) * n)
+            self.clear()
+            for _ in range(n):
+                self.extend(items)
+        return self
 
     # ------------------------------------------------------------------
     # Bound hook (overridden by BoundedSequence)

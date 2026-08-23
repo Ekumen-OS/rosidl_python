@@ -273,3 +273,386 @@ def test_repr():
 def test_str():
     s = Scalar(Dtype.FLOAT64, 1.5)
     assert str(s) == '1.5'
+
+
+# ---------------------------------------------------------------------------
+# Binary arithmetic
+# ---------------------------------------------------------------------------
+
+def test_add_scalar():
+    r = Scalar(Dtype.INT32, 5) + Scalar(Dtype.INT32, 3)
+    assert isinstance(r, Scalar)
+    assert r.dtype is Dtype.INT32
+    assert r.value == 8
+
+
+def test_add_python_int():
+    r = Scalar(Dtype.INT32, 5) + 3
+    assert isinstance(r, Scalar)
+    assert r.dtype is Dtype.INT32
+    assert r.value == 8
+
+
+def test_radd_python_int():
+    r = 3 + Scalar(Dtype.INT32, 5)
+    assert isinstance(r, Scalar)
+    assert r.dtype is Dtype.INT32
+    assert r.value == 8
+
+
+def test_sub():
+    assert (Scalar(Dtype.INT32, 5) - 3).value == 2
+    assert (3 - Scalar(Dtype.INT32, 5)).value == -2
+
+
+def test_mul():
+    assert (Scalar(Dtype.INT32, 5) * 3).value == 15
+    assert (3 * Scalar(Dtype.INT32, 5)).value == 15
+
+
+def test_truediv_promotes_to_float():
+    r = Scalar(Dtype.INT32, 5) / 2
+    assert isinstance(r, Scalar)
+    assert r.dtype is Dtype.FLOAT64
+    assert r.value == 2.5
+
+
+def test_rtruediv():
+    r = 6 / Scalar(Dtype.INT32, 2)
+    assert r.dtype is Dtype.FLOAT64
+    assert r.value == 3.0
+
+
+def test_floordiv():
+    assert (Scalar(Dtype.INT32, 5) // 2).value == 2
+    assert (5 // Scalar(Dtype.INT32, 2)).value == 2
+
+
+def test_mod():
+    assert (Scalar(Dtype.INT32, 5) % 2).value == 1
+    assert (5 % Scalar(Dtype.INT32, 2)).value == 1
+
+
+def test_pow():
+    assert (Scalar(Dtype.INT32, 2) ** 10).value == 1024
+    assert (2 ** Scalar(Dtype.INT32, 3)).value == 8
+
+
+def test_pow_negative_exponent_promotes_to_float():
+    # Python: 2 ** -1 == 0.5 (numpy would raise for int ** negative).
+    r = Scalar(Dtype.INT32, 2) ** -1
+    assert r.dtype is Dtype.FLOAT64
+    assert r.value == 0.5
+
+
+def test_rpow_negative_exponent_promotes_to_float():
+    r = 2 ** Scalar(Dtype.INT32, -1)
+    assert r.dtype is Dtype.FLOAT64
+    assert r.value == 0.5
+
+
+def test_pow_complex_exponent_raises_cleanly():
+    # Complex has no ROS dtype; the result must be a TypeError, not a crash
+    # in the negative-exponent check.
+    with pytest.raises(TypeError, match='unsupported result dtype'):
+        Scalar(Dtype.INT32, 2) ** complex(1, 0)
+
+
+def test_float_arithmetic():
+    r = Scalar(Dtype.FLOAT64, 2.5) + 1.5
+    assert r.dtype is Dtype.FLOAT64
+    assert r.value == 4.0
+
+
+def test_bool_arithmetic_numpy_semantics():
+    # numpy: bool + bool is logical OR (not Python's int promotion).
+    r = Scalar(Dtype.BOOL, True) + Scalar(Dtype.BOOL, True)
+    assert r.dtype is Dtype.BOOL
+    assert r.value is True
+
+
+def test_bool_plus_int_promotes():
+    # numpy promotes bool + Python int to the default integer dtype (int64).
+    r = Scalar(Dtype.BOOL, True) + 1
+    assert r.dtype is Dtype.INT64
+    assert r.value == 2
+
+
+def test_result_is_new_scalar():
+    a = Scalar(Dtype.INT32, 5)
+    b = a + 3
+    assert a.value == 5  # original unchanged
+    assert b.value == 8
+
+
+# ---------------------------------------------------------------------------
+# Type promotion
+# ---------------------------------------------------------------------------
+
+def test_promotion_uint8_int32():
+    r = Scalar(Dtype.UINT8, 5) + Scalar(Dtype.INT32, 3)
+    assert r.dtype is Dtype.INT32
+    assert r.value == 8
+
+
+def test_promotion_int32_float64():
+    r = Scalar(Dtype.INT32, 5) + 3.0
+    assert r.dtype is Dtype.FLOAT64
+    assert r.value == 8.0
+
+
+def test_promotion_uint8_overflow_wraps():
+    # numpy wraps unsigned overflow (C semantics).
+    r = Scalar(Dtype.UINT8, 200) + Scalar(Dtype.UINT8, 100)
+    assert r.dtype is Dtype.UINT8
+    assert r.value == 44
+
+
+def test_promotion_char_to_uint8():
+    # Arithmetic on a char scalar yields the canonical numeric dtype.
+    r = Scalar(Dtype.CHAR, 65) + 1
+    assert r.dtype is Dtype.UINT8
+    assert r.value == 66
+
+
+# ---------------------------------------------------------------------------
+# Bitwise arithmetic
+# ---------------------------------------------------------------------------
+
+def test_bitwise_and():
+    assert (Scalar(Dtype.INT32, 12) & 10).value == 8
+    assert (10 & Scalar(Dtype.INT32, 12)).value == 8
+
+
+def test_bitwise_or():
+    assert (Scalar(Dtype.INT32, 12) | 3).value == 15
+    assert (3 | Scalar(Dtype.INT32, 12)).value == 15
+
+
+def test_bitwise_xor():
+    assert (Scalar(Dtype.INT32, 12) ^ 10).value == 6
+    assert (10 ^ Scalar(Dtype.INT32, 12)).value == 6
+
+
+def test_lshift():
+    assert (Scalar(Dtype.INT32, 5) << 2).value == 20
+    assert (5 << Scalar(Dtype.INT32, 2)).value == 20
+
+
+def test_rshift():
+    assert (Scalar(Dtype.INT32, 20) >> 2).value == 5
+    assert (20 >> Scalar(Dtype.INT32, 2)).value == 5
+
+
+def test_invert():
+    assert (~Scalar(Dtype.INT32, 5)).value == -6
+
+
+def test_bitwise_on_float_raises():
+    with pytest.raises(TypeError):
+        Scalar(Dtype.FLOAT64, 1.5) & 1
+
+
+# ---------------------------------------------------------------------------
+# Unary arithmetic
+# ---------------------------------------------------------------------------
+
+def test_neg():
+    r = -Scalar(Dtype.INT32, 5)
+    assert isinstance(r, Scalar)
+    assert r.value == -5
+
+
+def test_pos():
+    assert (+Scalar(Dtype.INT32, 5)).value == 5
+
+
+def test_abs():
+    r = abs(Scalar(Dtype.INT32, -5))
+    assert isinstance(r, Scalar)
+    assert r.value == 5
+
+
+def test_abs_float():
+    assert abs(Scalar(Dtype.FLOAT64, -2.5)).value == 2.5
+
+
+# ---------------------------------------------------------------------------
+# In-place arithmetic
+# ---------------------------------------------------------------------------
+
+def test_iadd_returns_self():
+    s = Scalar(Dtype.INT32, 5)
+    r = s.__iadd__(3)
+    assert r is s
+    assert s.value == 8
+
+
+def test_iadd_python_syntax():
+    s = Scalar(Dtype.INT32, 5)
+    s += 3
+    assert s.value == 8
+
+
+def test_iadd_promotes_dtype():
+    s = Scalar(Dtype.INT32, 5)
+    s += 0.5
+    assert s.dtype is Dtype.FLOAT64
+    assert s.value == 5.5
+
+
+def test_isub():
+    s = Scalar(Dtype.INT32, 5)
+    s -= 2
+    assert s.value == 3
+
+
+def test_imul():
+    s = Scalar(Dtype.INT32, 5)
+    s *= 3
+    assert s.value == 15
+
+
+def test_itruediv():
+    s = Scalar(Dtype.INT32, 5)
+    s /= 2
+    assert s.dtype is Dtype.FLOAT64
+    assert s.value == 2.5
+
+
+def test_ifloordiv():
+    s = Scalar(Dtype.INT32, 5)
+    s //= 2
+    assert s.value == 2
+
+
+def test_imod():
+    s = Scalar(Dtype.INT32, 5)
+    s %= 2
+    assert s.value == 1
+
+
+def test_ipow():
+    s = Scalar(Dtype.INT32, 2)
+    s **= 10
+    assert s.value == 1024
+
+
+def test_ipow_negative_exponent_promotes():
+    s = Scalar(Dtype.INT32, 2)
+    s **= -1
+    assert s.dtype is Dtype.FLOAT64
+    assert s.value == 0.5
+
+
+def test_iand():
+    s = Scalar(Dtype.INT32, 12)
+    s &= 10
+    assert s.value == 8
+
+
+def test_ior():
+    s = Scalar(Dtype.INT32, 12)
+    s |= 3
+    assert s.value == 15
+
+
+def test_ixor():
+    s = Scalar(Dtype.INT32, 12)
+    s ^= 10
+    assert s.value == 6
+
+
+def test_ilshift():
+    s = Scalar(Dtype.INT32, 5)
+    s <<= 2
+    assert s.value == 20
+
+
+def test_irshift():
+    s = Scalar(Dtype.INT32, 20)
+    s >>= 2
+    assert s.value == 5
+
+
+def test_inplace_with_scalar_operand():
+    s = Scalar(Dtype.INT32, 5)
+    s += Scalar(Dtype.INT32, 3)
+    assert s.value == 8
+
+
+# ---------------------------------------------------------------------------
+# In-place arithmetic — external (non-owning) backing
+# ---------------------------------------------------------------------------
+
+def test_external_inplace_same_dtype_writes_through():
+    # In-place ops on an externally-backed scalar must write through to the
+    # external RawBuffer, preserving the zero-copy aliasing.
+    buf = RawBuffer(4, growing=False)
+    s = Scalar(Dtype.INT32, buffer=buf)
+    s += 3
+    assert s._buffer is buf
+    assert s.value == 3
+    assert bytes(buf) == b'\x03\x00\x00\x00'
+
+
+def test_external_inplace_all_ops_write_through():
+    buf = RawBuffer(4, growing=False)
+    s = Scalar(Dtype.INT32, buffer=buf)
+    s += 10
+    s -= 3
+    s *= 2
+    s //= 3
+    s %= 3
+    s |= 4
+    s &= 3
+    s ^= 2
+    s <<= 2
+    s >>= 1
+    assert s._buffer is buf
+    assert s.value == 6
+    assert bytes(buf) == b'\x06\x00\x00\x00'
+
+
+def test_external_inplace_promotion_raises():
+    # A dtype-promoting in-place op cannot fit in the external buffer; it must
+    # raise rather than silently swap in managed storage (which would break
+    # the aliasing with the C/C++ side).
+    buf = RawBuffer(4, growing=False)
+    s = Scalar(Dtype.INT32, buffer=buf)
+    with pytest.raises(BufferError, match='external'):
+        s += 0.5
+    # The scalar still aliases the external buffer, unchanged.
+    assert s._buffer is buf
+    assert s.dtype is Dtype.INT32
+    assert s.value == 0
+
+
+def test_external_inplace_promotion_raises_for_division():
+    buf = RawBuffer(4, growing=False)
+    s = Scalar(Dtype.INT32, buffer=buf)
+    with pytest.raises(BufferError, match='external'):
+        s /= 2  # int / int promotes to float64
+    assert s._buffer is buf
+
+
+def test_managed_inplace_promotion_still_works():
+    # Managed (owning) scalars may still promote dtype in place.
+    s = Scalar(Dtype.INT32, 5)
+    s += 0.5
+    assert s.dtype is Dtype.FLOAT64
+    assert s.value == 5.5
+
+
+# ---------------------------------------------------------------------------
+# Arithmetic error cases
+# ---------------------------------------------------------------------------
+
+def test_add_unsupported_type_raises():
+    with pytest.raises(TypeError):
+        Scalar(Dtype.INT32, 5) + 'x'
+
+
+def test_add_unsupported_type_reverse_raises():
+    with pytest.raises(TypeError):
+        'x' + Scalar(Dtype.INT32, 5)

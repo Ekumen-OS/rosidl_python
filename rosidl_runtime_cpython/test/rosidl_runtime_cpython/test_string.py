@@ -237,6 +237,111 @@ class TestString:
         s.assign('hi')
         assert repr(s) == "String('hi')"
 
+    # -----------------------------------------------------------------------
+    # Arithmetic (concatenation / repetition)
+    # -----------------------------------------------------------------------
+
+    def test_add_string(self):
+        r = String('hello') + String(' world')
+        assert isinstance(r, String)
+        assert str(r) == 'hello world'
+
+    def test_add_str(self):
+        r = String('hello') + ' world'
+        assert isinstance(r, String)
+        assert str(r) == 'hello world'
+
+    def test_radd_str(self):
+        r = 'hello ' + String('world')
+        assert isinstance(r, String)
+        assert str(r) == 'hello world'
+
+    def test_add_utf8(self):
+        r = String('caf') + 'é'
+        assert str(r) == 'café'
+        assert len(r) == 5  # 5 UTF-8 bytes
+
+    def test_add_empty(self):
+        assert str(String('') + 'x') == 'x'
+        assert str(String('x') + '') == 'x'
+
+    def test_add_returns_new_string(self):
+        a = String('hello')
+        b = a + ' world'
+        assert str(a) == 'hello'  # original unchanged
+        assert str(b) == 'hello world'
+
+    def test_mul(self):
+        r = String('ab') * 3
+        assert isinstance(r, String)
+        assert str(r) == 'ababab'
+
+    def test_rmul(self):
+        r = 3 * String('ab')
+        assert isinstance(r, String)
+        assert str(r) == 'ababab'
+
+    def test_mul_zero(self):
+        assert str(String('ab') * 0) == ''
+
+    def test_mul_negative(self):
+        assert str(String('ab') * -1) == ''
+
+    def test_mul_non_int_raises(self):
+        with pytest.raises(TypeError):
+            String('ab') * 2.5
+
+    def test_mul_numpy_int(self):
+        # numpy integers are accepted via operator.index (like Python's str * np.int64).
+        r = String('ab') * np.int64(3)
+        assert str(r) == 'ababab'
+
+    def test_imul_numpy_int(self):
+        s = String('ab')
+        s *= np.int64(2)
+        assert str(s) == 'abab'
+
+    def test_add_bytes_raises(self):
+        # str + bytes raises TypeError; String mirrors that.
+        with pytest.raises(TypeError):
+            String('hello') + b' world'
+
+    def test_add_int_raises(self):
+        with pytest.raises(TypeError):
+            String('hello') + 5
+
+    def test_iadd_str(self):
+        s = String('hello')
+        r = s.__iadd__(' world')
+        assert r is s
+        assert str(s) == 'hello world'
+
+    def test_iadd_string(self):
+        s = String('hello')
+        s += String(' world')
+        assert str(s) == 'hello world'
+
+    def test_iadd_python_syntax(self):
+        s = String('hello')
+        s += ' world'
+        assert str(s) == 'hello world'
+
+    def test_imul(self):
+        s = String('ab')
+        r = s.__imul__(3)
+        assert r is s
+        assert str(s) == 'ababab'
+
+    def test_imul_python_syntax(self):
+        s = String('ab')
+        s *= 3
+        assert str(s) == 'ababab'
+
+    def test_imul_zero(self):
+        s = String('ab')
+        s *= 0
+        assert str(s) == ''
+
 
 # ===========================================================================
 # WString
@@ -421,6 +526,73 @@ class TestWString:
         s.assign('hi')
         assert repr(s) == "WString('hi')"
 
+    # -----------------------------------------------------------------------
+    # Arithmetic (concatenation / repetition)
+    # -----------------------------------------------------------------------
+
+    def test_add_wstring(self):
+        r = WString('hello') + WString(' world')
+        assert isinstance(r, WString)
+        assert str(r) == 'hello world'
+
+    def test_add_str(self):
+        r = WString('hello') + ' world'
+        assert isinstance(r, WString)
+        assert str(r) == 'hello world'
+
+    def test_radd_str(self):
+        r = 'hello ' + WString('world')
+        assert isinstance(r, WString)
+        assert str(r) == 'hello world'
+
+    def test_add_multibyte(self):
+        r = WString('caf') + 'é'
+        assert str(r) == 'café'
+        assert len(r) == 4  # 4 UTF-16 code units
+
+    def test_mul(self):
+        r = WString('ab') * 3
+        assert isinstance(r, WString)
+        assert str(r) == 'ababab'
+
+    def test_rmul(self):
+        r = 3 * WString('ab')
+        assert isinstance(r, WString)
+        assert str(r) == 'ababab'
+
+    def test_mul_zero(self):
+        assert str(WString('ab') * 0) == ''
+
+    def test_mul_non_int_raises(self):
+        with pytest.raises(TypeError):
+            WString('ab') * 2.5
+
+    def test_add_int_raises(self):
+        with pytest.raises(TypeError):
+            WString('hello') + 5
+
+    def test_iadd(self):
+        s = WString('hello')
+        r = s.__iadd__(' world')
+        assert r is s
+        assert str(s) == 'hello world'
+
+    def test_iadd_python_syntax(self):
+        s = WString('hello')
+        s += ' world'
+        assert str(s) == 'hello world'
+
+    def test_imul(self):
+        s = WString('ab')
+        r = s.__imul__(3)
+        assert r is s
+        assert str(s) == 'ababab'
+
+    def test_imul_python_syntax(self):
+        s = WString('ab')
+        s *= 3
+        assert str(s) == 'ababab'
+
 
 # ===========================================================================
 # BoundedString
@@ -481,6 +653,35 @@ class TestBoundedString:
         s.append_str(' world')
         assert str(s) == 'hello world'
 
+    # -----------------------------------------------------------------------
+    # Arithmetic
+    # -----------------------------------------------------------------------
+
+    def test_add_loses_bound(self):
+        r = BoundedString(5, 'hello') + ' world'
+        assert type(r) is String  # bound is not preserved
+        assert str(r) == 'hello world'
+
+    def test_mul_loses_bound(self):
+        r = BoundedString(5, 'ab') * 3
+        assert type(r) is String
+        assert str(r) == 'ababab'
+
+    def test_iadd_respects_bound(self):
+        s = BoundedString(5, 'hello')
+        with pytest.raises(ValueError, match='upper bound'):
+            s += '!'
+
+    def test_iadd_within_bound(self):
+        s = BoundedString(20, 'hello')
+        s += ' world'
+        assert str(s) == 'hello world'
+
+    def test_imul_respects_bound(self):
+        s = BoundedString(3, 'ab')
+        with pytest.raises(ValueError, match='upper bound'):
+            s *= 2  # 'abab' is 4 bytes > 3
+
 
 # ===========================================================================
 # BoundedWString
@@ -534,6 +735,30 @@ class TestBoundedWString:
         s.assign('hello')
         s.append_str(' world')
         assert str(s) == 'hello world'
+
+    # -----------------------------------------------------------------------
+    # Arithmetic
+    # -----------------------------------------------------------------------
+
+    def test_add_loses_bound(self):
+        r = BoundedWString(5, 'hello') + ' world'
+        assert type(r) is WString  # bound is not preserved
+        assert str(r) == 'hello world'
+
+    def test_mul_loses_bound(self):
+        r = BoundedWString(5, 'ab') * 3
+        assert type(r) is WString
+        assert str(r) == 'ababab'
+
+    def test_iadd_respects_bound(self):
+        s = BoundedWString(5, 'hello')
+        with pytest.raises(ValueError, match='upper bound'):
+            s += '!'
+
+    def test_imul_respects_bound(self):
+        s = BoundedWString(3, 'ab')
+        with pytest.raises(ValueError, match='upper bound'):
+            s *= 2  # 'abab' is 4 code units > 3
 
 
 # ===========================================================================

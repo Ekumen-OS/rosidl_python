@@ -113,6 +113,7 @@ if(BUILD_TESTING)
     test/rosidl_runtime_cpython/test_dtype.py
     test/rosidl_runtime_cpython/test_scalar.py
     test/rosidl_runtime_cpython/test_primitives.py
+    test/rosidl_runtime_cpython/test_primitives_string.py
     test/rosidl_runtime_cpython/test_array.py
     test/rosidl_runtime_cpython/test_sequence.py
     test/rosidl_runtime_cpython/test_string.py

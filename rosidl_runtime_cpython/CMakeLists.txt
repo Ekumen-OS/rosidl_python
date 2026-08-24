@@ -14,6 +14,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
 find_package(rosidl_runtime_c REQUIRED)
+find_package(rosidl_runtime_cpp REQUIRED)
 
 # Prefer the unversioned system Python (matches rclpy's approach).
 cmake_policy(SET CMP0094 NEW)
@@ -69,6 +70,24 @@ install(TARGETS _raw_buffer_cpp
 )
 
 # ---------------------------------------------------------------------------
+# C++ extension: rosidl_runtime_cpython._primitives  (native typed wrappers)
+# ---------------------------------------------------------------------------
+pybind11_add_module(_primitives src/primitives.cpp)
+target_include_directories(_primitives PRIVATE
+  "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+  ${rosidl_runtime_c_INCLUDE_DIRS}
+)
+target_link_libraries(_primitives PRIVATE
+  rosidl_runtime_cpp::rosidl_runtime_cpp
+)
+set_target_properties(_primitives PROPERTIES
+  LIBRARY_OUTPUT_DIRECTORY $<1:${CMAKE_CURRENT_BINARY_DIR}/rosidl_runtime_cpython>
+)
+install(TARGETS _primitives
+  DESTINATION "${PYTHON_INSTALL_DIR}/rosidl_runtime_cpython"
+)
+
+# ---------------------------------------------------------------------------
 # Exported build interface
 # ---------------------------------------------------------------------------
 # Downstream C/C++ packages (e.g. rosidl_typesupport_xcdr_cpython) consume
@@ -93,6 +112,7 @@ if(BUILD_TESTING)
   set(_pytest_tests
     test/rosidl_runtime_cpython/test_dtype.py
     test/rosidl_runtime_cpython/test_scalar.py
+    test/rosidl_runtime_cpython/test_primitives.py
     test/rosidl_runtime_cpython/test_array.py
     test/rosidl_runtime_cpython/test_sequence.py
     test/rosidl_runtime_cpython/test_string.py

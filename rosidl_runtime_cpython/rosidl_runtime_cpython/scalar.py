@@ -25,6 +25,30 @@ import numpy.typing as npt
 from rosidl_runtime_cpython._raw_buffer import RawBuffer
 from rosidl_runtime_cpython.dtype import Dtype, dtype_from_numpy
 
+# ---------------------------------------------------------------------------
+# Native statically typed scalar wrappers (Phase 1 of the zero-copy overhaul,
+# ADR-001/002/003/004). These are pybind11 classes over
+# rosidl_runtime_cpp::Scalar<T>. Aliased IDL types (uint8/octet/byte/char)
+# share the UInt8 class; Char/Byte/Octet are aliases.
+# ---------------------------------------------------------------------------
+from rosidl_runtime_cpython._primitives import (  # noqa: E402
+    Bool,
+    Byte,
+    Char,
+    Float32,
+    Float64,
+    Int8,
+    Int16,
+    Int32,
+    Int64,
+    LongDouble,
+    Octet,
+    UInt8,
+    UInt16,
+    UInt32,
+    UInt64,
+)
+
 
 class Scalar:
     """

@@ -21,10 +21,13 @@ import sys
 from rosidl_parser.definition import AbstractGenericString
 from rosidl_parser.definition import AbstractNestedType
 from rosidl_parser.definition import AbstractSequence
+from rosidl_parser.definition import AbstractWString
 from rosidl_parser.definition import Action
 from rosidl_parser.definition import Array
 from rosidl_parser.definition import BasicType
+from rosidl_parser.definition import BoundedSequence
 from rosidl_parser.definition import CHARACTER_TYPES
+from rosidl_parser.definition import EMPTY_STRUCTURE_REQUIRED_MEMBER_NAME
 from rosidl_parser.definition import FLOATING_POINT_TYPES
 from rosidl_parser.definition import IdlContent
 from rosidl_parser.definition import IdlLocator
@@ -52,14 +55,456 @@ SPECIAL_NESTED_BASIC_TYPES = {
     'uint64': {'dtype': 'numpy.uint64', 'type_code': 'Q'},
 }
 
+# ---------------------------------------------------------------------------
+# Experimental pybind11 binding generation (replaces the legacy Python
+# experimental message classes). The generated bindings follow the Phase 1B/3
+# patterns: MessageHandleBase-derived handles, assignable properties
+# (msg.field / msg.field = value), recursive as_builtin/from_builtin,
+# equality, repr, _reset/clear, and keyword constructors.
+# ---------------------------------------------------------------------------
+
+# IDL builtin type -> C++ primitive (matches rosidl_generator_cpp).
+BASIC_TYPE_TO_CPP = {
+    'boolean': 'bool',
+    'octet': 'uint8_t',
+    'char': 'uint8_t',
+    'wchar': 'char16_t',
+    'float': 'float',
+    'double': 'double',
+    'long double': 'long double',
+    'uint8': 'uint8_t',
+    'int8': 'int8_t',
+    'uint16': 'uint16_t',
+    'int16': 'int16_t',
+    'uint32': 'uint32_t',
+    'int32': 'int32_t',
+    'uint64': 'uint64_t',
+    'int64': 'int64_t',
+}
+
+
+def experimental_namespaced_type_name(type_):
+    """Return the C++ experimental qualified name for a NamespacedType."""
+    return '::'.join(list(type_.namespaces) + ['experimental', type_.name])
+
+
+def _member_kind(type_):
+    """Classify a member type: scalar/string/wstring/sequence/array/nested."""
+    if isinstance(type_, AbstractNestedType):
+        value_type = type_.value_type
+        if isinstance(type_, Array):
+            return ('array', value_type)
+        if isinstance(type_, AbstractSequence):
+            return ('sequence', value_type)
+        return ('unsupported', type_)
+    if isinstance(type_, BasicType):
+        return ('scalar', type_)
+    if isinstance(type_, AbstractGenericString):
+        return ('string', type_)
+    if isinstance(type_, NamespacedType):
+        return ('nested', type_)
+    return ('unsupported', type_)
+
+
+def _handle_name(type_):
+    """The generated handle class name for a nested message type."""
+    return type_.name + 'Handle'
+
+
+def _element_cpp(type_):
+    """C++ element type for sequence/array members (None if unsupported)."""
+    if isinstance(type_, BasicType):
+        return BASIC_TYPE_TO_CPP[type_.typename]
+    if isinstance(type_, NamespacedType):
+        return experimental_namespaced_type_name(type_)
+    if isinstance(type_, AbstractWString):
+        if type_.has_maximum_size():
+            return 'rosidl_runtime_cpp::BoundedWString<{}>'.format(type_.maximum_size)
+        return 'rosidl_runtime_cpp::WString'
+    if isinstance(type_, AbstractGenericString):
+        if type_.has_maximum_size():
+            return 'rosidl_runtime_cpp::BoundedString<{}>'.format(type_.maximum_size)
+        return 'rosidl_runtime_cpp::String'
+    return None
+
+
+def _string_char(type_):
+    """CharT for a string member (char or char16_t)."""
+    return 'char16_t' if isinstance(type_, AbstractWString) else 'char'
+
+
+def _string_cpp_cast(type_):
+    """The py::cast type for a string member's value."""
+    return 'std::u16string' if _string_char(type_) == 'char16_t' else 'std::string'
+
+
+def member_getter_decl(member):
+    """C++ getter declaration (signature only) for a message member."""
+    code = member_getter_code(member)
+    return code.split('\n')[0] + ';'
+
+
+def member_setter_decl(member):
+    """C++ setter declaration (signature only) for a message member."""
+    code = member_setter_code(member)
+    return code.split('\n')[0] + ';'
+
+
+def member_getter_impl(member, class_name):
+    """C++ getter definition qualified with the handle class name."""
+    code = member_getter_code(member)
+    return code.replace(
+        ' {name}('.format(name=member.name),
+        ' {cls}::{name}('.format(cls=class_name, name=member.name), 1)
+
+
+def member_setter_impl(member, class_name):
+    """C++ setter definition qualified with the handle class name."""
+    code = member_setter_code(member)
+    return code.replace(
+        ' set_{name}('.format(name=member.name),
+        ' {cls}::set_{name}('.format(cls=class_name, name=member.name), 1)
+
+
+def _element_from_py(type_):
+    """C++ expression converting a Python element to the C++ element type."""
+    if isinstance(type_, BasicType):
+        return 'ElementTraits<{}>::from_py(item)'.format(BASIC_TYPE_TO_CPP[type_.typename])
+    if isinstance(type_, NamespacedType):
+        return '{}::from_py(item)'.format(_handle_name(type_))
+    if isinstance(type_, AbstractGenericString):
+        return 'ElementTraits<{}>::from_py(item)'.format(_element_cpp(type_))
+    assert False, type_
+
+
+def _element_to_builtin(type_, var):
+    """C++ expression converting a C++ element to a Python builtin."""
+    if isinstance(type_, BasicType):
+        return 'py::cast({var})'.format(var=var)
+    if isinstance(type_, NamespacedType):
+        return '{}::as_builtin_dict({var})'.format(_handle_name(type_), var=var)
+    if isinstance(type_, AbstractWString):
+        return (
+            'py::bytes(std::string(reinterpret_cast<const char *>({var}.data()), '
+            '{var}.size() * sizeof(char16_t))).attr("decode")("utf-16-le")'
+        ).format(var=var)
+    if isinstance(type_, AbstractGenericString):
+        return 'py::str(std::string({var}.data(), {var}.size()))'.format(var=var)
+    assert False, type_
+
+
+def member_getter_code(member):
+    """C++ getter method for a message member (returns a parent-anchored wrapper)."""
+    name = member.name
+    kind, type_ = _member_kind(member.type)
+    if kind == 'scalar':
+        t = BASIC_TYPE_TO_CPP[type_.typename]
+        return (
+            '  std::shared_ptr<ScalarWrapper<{t}>> {name}()\n'
+            '  {{\n'
+            '    return std::make_shared<ScalarWrapper<{t}>>(&msg_->{name}, py::cast(this));\n'
+            '  }}').format(t=t, name=name)
+    if kind == 'string':
+        c = _string_char(type_)
+        bound = type_.maximum_size if type_.has_maximum_size() else 0
+        return (
+            '  std::shared_ptr<StringWrapper<{c}>> {name}()\n'
+            '  {{\n'
+            '    return std::make_shared<StringWrapper<{c}>>(\n'
+            '      std::unique_ptr<StringInterface<{c}>>(new StringReference<{c}, {bound}>(&msg_->{name})),\n'
+            '      py::cast(this));\n'
+            '  }}').format(c=c, name=name, bound=bound)
+    if kind == 'sequence':
+        t = _element_cpp(type_)
+        bound = member.type.maximum_size if isinstance(member.type, BoundedSequence) else 0
+        return (
+            '  std::shared_ptr<SequenceWrapper<{t}>> {name}()\n'
+            '  {{\n'
+            '    return std::make_shared<SequenceWrapper<{t}>>(\n'
+            '      std::unique_ptr<SequenceInterface<{t}>>(new SequenceReference<{t}, {bound}>(&msg_->{name})),\n'
+            '      py::cast(this));\n'
+            '  }}').format(t=t, name=name, bound=bound)
+    if kind == 'array':
+        t = _element_cpp(type_)
+        n = member.type.size
+        return (
+            '  std::shared_ptr<ArrayWrapper<{t}>> {name}()\n'
+            '  {{\n'
+            '    return std::make_shared<ArrayWrapper<{t}>>(\n'
+            '      std::unique_ptr<ArrayInterface<{t}>>(new ArrayReference<{t}, {n}>(&msg_->{name})),\n'
+            '      py::cast(this));\n'
+            '  }}').format(t=t, name=name, n=n)
+    if kind == 'nested':
+        h = _handle_name(type_)
+        return (
+            '  std::shared_ptr<{h}> {name}()\n'
+            '  {{\n'
+            '    return std::make_shared<{h}>(&msg_->{name}, py::cast(this));\n'
+            '  }}').format(h=h, name=name)
+    assert False, member.type
+
+
+def member_setter_code(member):
+    """C++ setter method for a message member (checked copy into the member)."""
+    name = member.name
+    kind, type_ = _member_kind(member.type)
+    if kind == 'scalar':
+        t = BASIC_TYPE_TO_CPP[type_.typename]
+        return (
+            '  void set_{name}(py::handle value)\n'
+            '  {{\n'
+            '    msg_->{name}.get() = ElementTraits<{t}>::from_py(value);\n'
+            '  }}').format(t=t, name=name)
+    if kind == 'string':
+        cast = _string_cpp_cast(type_)
+        return (
+            '  void set_{name}(py::handle value)\n'
+            '  {{\n'
+            '    msg_->{name}.assign(py::cast<{cast}>(value));\n'
+            '  }}').format(cast=cast, name=name)
+    if kind in ('sequence', 'array'):
+        t = _element_cpp(type_)
+        n = member.type.size if kind == 'array' else None
+        size_check = (
+            '    if (tmp.size() != {n}) {{\n'
+            '      throw py::value_error("array requires exactly {n} elements");\n'
+            '    }}\n').format(n=n) if n is not None else ''
+        assign = (
+            '    for (size_t i = 0; i < {n}; ++i) {{\n'
+            '      msg_->{name}[i] = tmp[i];\n'
+            '    }}\n').format(n=n, name=name) if n is not None else (
+            '    msg_->{name}.assign(tmp.begin(), tmp.end());\n').format(name=name)
+        return (
+            '  void set_{name}(py::handle value)\n'
+            '  {{\n'
+            '    std::vector<{t}> tmp;\n'
+            '    for (auto item : py::iter(value)) {{\n'
+            '      tmp.push_back({elem_from_py});\n'
+            '    }}\n'
+            '{size_check}'
+            '{assign}'
+            '  }}').format(
+                t=t, name=name, elem_from_py=_element_from_py(type_),
+                size_check=size_check, assign=assign)
+    if kind == 'nested':
+        h = _handle_name(type_)
+        return (
+            '  void set_{name}(py::handle value)\n'
+            '  {{\n'
+            '    msg_->{name} = {h}::from_py(value);\n'
+            '  }}').format(h=h, name=name)
+    assert False, member.type
+
+
+def member_as_builtin_code(member, var='m'):
+    """C++ expression producing the as_builtin dict entry for a member."""
+    name = member.name
+    kind, type_ = _member_kind(member.type)
+    if kind == 'scalar':
+        return 'd["{name}"] = py::cast({var}.{name}.get());'.format(name=name, var=var)
+    if kind == 'string':
+        elem = _element_to_builtin(type_, '{var}.{name}'.format(var=var, name=name))
+        return 'd["{name}"] = {elem};'.format(name=name, elem=elem)
+    if kind in ('sequence', 'array'):
+        elem = _element_to_builtin(type_, '{var}.{name}[i]'.format(var=var, name=name))
+        return (
+            'py::list {name}_list;\n'
+            '    for (size_t i = 0; i < {var}.{name}.size(); ++i) {{\n'
+            '      {name}_list.append({elem});\n'
+            '    }}\n'
+            '    d["{name}"] = {name}_list;').format(name=name, var=var, elem=elem)
+    if kind == 'nested':
+        h = _handle_name(type_)
+        return 'd["{name}"] = {h}::as_builtin_dict({var}.{name});'.format(
+            name=name, var=var, h=h)
+    assert False, member.type
+
+
+def member_from_builtin_code(member, var='(*msg_)'):
+    """C++ statement reading a member from a dict (from_builtin/from_py).
+
+    ``var`` is the message object expression (``(*msg_)`` for from_builtin,
+    ``m`` for from_py).
+    """
+    name = member.name
+    kind, type_ = _member_kind(member.type)
+    if kind == 'scalar':
+        t = BASIC_TYPE_TO_CPP[type_.typename]
+        return '{var}.{name}.get() = py::cast<{t}>(d["{name}"]);'.format(
+            var=var, name=name, t=t)
+    if kind == 'string':
+        cast = _string_cpp_cast(type_)
+        return '{var}.{name}.assign(py::cast<{cast}>(d["{name}"]));'.format(
+            var=var, name=name, cast=cast)
+    if kind in ('sequence', 'array'):
+        t = _element_cpp(type_)
+        n = member.type.size if kind == 'array' else None
+        size_check = (
+            '    if (tmp.size() != {n}) {{\n'
+            '      throw py::value_error("array requires exactly {n} elements");\n'
+            '    }}\n').format(n=n) if n is not None else ''
+        assign = (
+            '    for (size_t i = 0; i < {n}; ++i) {{\n'
+            '      {var}.{name}[i] = tmp[i];\n'
+            '    }}\n').format(n=n, var=var, name=name) if n is not None else (
+            '    {var}.{name}.assign(tmp.begin(), tmp.end());\n').format(var=var, name=name)
+        return (
+            '{{\n'
+            '    std::vector<{t}> tmp;\n'
+            '    for (auto item : py::cast<py::list>(d["{name}"])) {{\n'
+            '      tmp.push_back({elem_from_py});\n'
+            '    }}\n'
+            '{size_check}'
+            '{assign}'
+            '  }}').format(
+                t=t, name=name, elem_from_py=_element_from_py(type_),
+                size_check=size_check, assign=assign)
+    if kind == 'nested':
+        h = _handle_name(type_)
+        return '{var}.{name} = {h}::from_py(d["{name}"]);'.format(
+            var=var, name=name, h=h)
+    assert False, member.type
+
+
+def member_create_code(member):
+    """C++ statement handling a keyword override in create()."""
+    name = member.name
+    return (
+        'if (key == "{name}") {{ h->set_{name}(item.second); matched = true; }}'
+    ).format(name=name)
+
+
+def member_repr_code(member, var='m'):
+    """C++ expression producing the repr fragment for a member."""
+    name = member.name
+    kind, type_ = _member_kind(member.type)
+    if kind == 'scalar':
+        return 'std::to_string({var}.{name}.get())'.format(var=var, name=name)
+    if kind == 'string':
+        elem = _element_to_builtin(type_, '{var}.{name}'.format(var=var, name=name))
+        return 'py::cast<std::string>(py::repr({elem}))'.format(elem=elem)
+    if kind in ('sequence', 'array'):
+        return 'py::cast<std::string>(py::repr(as_builtin()["{name}"]))'.format(name=name)
+    if kind == 'nested':
+        h = _handle_name(type_)
+        return 'py::cast<std::string>(py::repr({h}::as_builtin_dict({var}.{name})))'.format(
+            var=var, name=name, h=h)
+    assert False, member.type
+
+
+def _message_is_supported(message, supported, package_name):
+    """True if every member has a supported binding shape.
+
+    Unsupported shapes (services/actions, or same-package nested messages
+    that are themselves unsupported) are skipped with a no-op register
+    function until the generator handles them. Cross-package nested messages
+    are assumed supported (the dependency package generates its own
+    bindings).
+    """
+    for member in message.structure.members:
+        if member.name == EMPTY_STRUCTURE_REQUIRED_MEMBER_NAME:
+            continue
+        kind, type_ = _member_kind(member.type)
+        if kind == 'unsupported':
+            return False
+        if kind == 'nested':
+            if type_.namespaces[0] == package_name and type_.name not in supported:
+                return False
+        if kind in ('sequence', 'array'):
+            if isinstance(type_, NamespacedType):
+                if type_.namespaces[0] == package_name and type_.name not in supported:
+                    return False
+            elif not isinstance(type_, (BasicType, AbstractGenericString)):
+                return False
+    return True
+
+
+def compute_supported_messages(messages, package_name):
+    """Fixpoint: a message is supported if it and its same-package nested
+    messages are."""
+    supported = set()
+    changed = True
+    while changed:
+        changed = False
+        for message in messages:
+            name = message.structure.namespaced_type.name
+            if name in supported:
+                continue
+            if _message_is_supported(message, supported, package_name):
+                supported.add(name)
+                changed = True
+    return supported
+
+
+def collect_messages(idl_content):
+    """All messages to bind: top-level messages plus service request/response
+    and action goal/result/feedback constituent messages."""
+    messages = list(idl_content.get_elements_of_type(Message))
+    for service in idl_content.get_elements_of_type(Service):
+        messages.append(service.request_message)
+        messages.append(service.response_message)
+    for action in idl_content.get_elements_of_type(Action):
+        messages.append(action.goal)
+        messages.append(action.result)
+        messages.append(action.feedback)
+    return messages
+
+
+def compute_element_messages(messages):
+    """Message names used as sequence/array element types (need container
+    wrapper registration)."""
+    element_messages = set()
+    for message in messages:
+        for member in message.structure.members:
+            t = member.type
+            if isinstance(t, AbstractNestedType):
+                t = t.value_type
+            if isinstance(t, NamespacedType):
+                element_messages.add(t.name)
+    return element_messages
+
 
 def generate_py(generator_arguments_file, typesupport_impls):
+    args = read_generator_arguments(generator_arguments_file)
+    package_name = args['package_name']
+
+    # Parse all IDL files up front: needed for the supported-message fixpoint
+    # and the experimental module generation.
+    idl_content = IdlContent()
+    for idl_tuple in args.get('idl_tuples', []):
+        idl_parts = idl_tuple.rsplit(':', 1)
+        assert len(idl_parts) == 2
+        locator = IdlLocator(*idl_parts)
+        idl_file = parse_idl_file(locator)
+        idl_content.elements += idl_file.content.elements
+    messages = collect_messages(idl_content)
+    supported_messages = compute_supported_messages(messages, package_name)
+    element_messages = compute_element_messages(messages)
+
     mapping = {
         '_idl.py.em': '_%s.py',
         '_idl_support.c.em': '_%s_s.c',
-        '_idl_experimental.py.em': 'experimental/_%s.py',
+        # Experimental messages: pybind11 bindings (replaces the legacy
+        # Python experimental message classes). Services/actions are deferred.
+        'msg__experimental.cpp.em': 'experimental/detail/%s__cpython_binding.hpp',
+        'msg__experimental_impl.cpp.em': 'experimental/detail/%s__cpython_binding.cpp',
     }
-    generated_files = generate_files(generator_arguments_file, mapping)
+    generated_files = generate_files(
+        generator_arguments_file, mapping,
+        additional_context={
+            'member_getter_decl': member_getter_decl,
+            'member_setter_decl': member_setter_decl,
+            'member_getter_impl': member_getter_impl,
+            'member_setter_impl': member_setter_impl,
+            'member_getter_code': member_getter_code,
+            'member_setter_code': member_setter_code,
+            'member_as_builtin_code': member_as_builtin_code,
+            'member_from_builtin_code': member_from_builtin_code,
+            'member_create_code': member_create_code,
+            'member_repr_code': member_repr_code,
+            'supported_messages': supported_messages,
+            'element_messages': element_messages,
+        })
 
     args = read_generator_arguments(generator_arguments_file)
     package_name = args['package_name']
@@ -167,50 +612,68 @@ def generate_py(generator_arguments_file, typesupport_impls):
         experimental_dir = os.path.join(args['output_dir'], subfolder, 'experimental')
         os.makedirs(experimental_dir, exist_ok=True)
         with open(os.path.join(experimental_dir, '__init__.py'), 'w') as f:
-            module_names = {}
-            for idl_stem in modules[subfolder]:
-                module_names[idl_stem] = '_' + \
-                    convert_camel_case_to_lower_case_underscore(idl_stem)
-            for module_name, idl_stem in \
-                    sorted((value, key) for (key, value) in module_names.items()):
-                f.write(
-                    f'from {package_name}.{subfolder}.experimental.{module_name} import '
-                    f'{idl_stem} as {idl_stem}  # noqa: F401\n')
-                if subfolder == 'srv':
-                    f.write(
-                        f'from {package_name}.{subfolder}.experimental.{module_name} import '
-                        f'{idl_stem}_Event as {idl_stem}_Event  # noqa: F401\n')
-                    f.write(
-                        f'from {package_name}.{subfolder}.experimental.{module_name} import '
-                        f'{idl_stem}_Request as {idl_stem}_Request  # noqa: F401\n')
-                    f.write(
-                        f'from {package_name}.{subfolder}.experimental.{module_name} import '
-                        f'{idl_stem}_Response as {idl_stem}_Response  # noqa: F401\n')
-                elif subfolder == 'action':
-                    f.write(
-                        f'from {package_name}.{subfolder}.experimental.{module_name} import '
-                        f'{idl_stem}_GetResult_Event as {idl_stem}_GetResult_Event'
-                        '  # noqa: F401\n')
-                    f.write(
-                        f'from {package_name}.{subfolder}.experimental.{module_name} import '
-                        f'{idl_stem}_GetResult_Request as {idl_stem}_GetResult_Request'
-                        '  # noqa: F401\n')
-                    f.write(
-                        f'from {package_name}.{subfolder}.experimental.{module_name} import '
-                        f'{idl_stem}_GetResult_Response as {idl_stem}_GetResult_Response'
-                        '  # noqa: F401\n')
-                    f.write(
-                        f'from {package_name}.{subfolder}.experimental.{module_name} import '
-                        f'{idl_stem}_SendGoal_Event as {idl_stem}_SendGoal_Event'
-                        '  # noqa: F401\n')
-                    f.write(
-                        f'from {package_name}.{subfolder}.experimental.{module_name} import '
-                        f'{idl_stem}_SendGoal_Request as {idl_stem}_SendGoal_Request'
-                        '  # noqa: F401\n')
-                    f.write(
-                        f'from {package_name}.{subfolder}.experimental.{module_name} import '
-                        f'{idl_stem}_SendGoal_Response as {idl_stem}_SendGoal_Response'
-                        '  # noqa: F401\n')
+            # Experimental messages, services, and actions are bound by the
+            # compiled pybind11 extension _bindings (installed into the
+            # msg/experimental directory); re-export its classes.
+            f.write(
+                f'from {package_name}.msg.experimental._bindings '
+                f'import *  # noqa: F401,F403\n')
+
+    # Generate the package-level pybind11 module: includes every interface
+    # binding header (msg/srv/action), imports dependency extensions
+    # (cross-DSO type sharing), and registers each message.
+    if modules:
+        # Only import dependency packages whose messages are referenced as
+        # nested member types (cross-package type sharing); importing every
+        # dependency would fail for service-only deps without bindings.
+        nested_dep_pkgs = set()
+        for message in collect_messages(idl_content):
+            for member in message.structure.members:
+                t = member.type
+                if isinstance(t, AbstractNestedType):
+                    t = t.value_type
+                if isinstance(t, NamespacedType) and t.namespaces[0] != package_name:
+                    nested_dep_pkgs.add(t.namespaces[0])
+        module_includes = []
+        register_calls = []
+        dependency_imports = []
+        for idl_tuple in args.get('idl_tuples', []):
+            idl_parts = idl_tuple.rsplit(':', 1)
+            locator = IdlLocator(*idl_parts)
+            idl_file = parse_idl_file(locator)
+            idl_rel = pathlib.Path(idl_parts[1])
+            folder = str(idl_rel.parent)
+            stem = convert_camel_case_to_lower_case_underscore(idl_rel.stem)
+            module_includes.append(
+                f'#include "{package_name}/{folder}/experimental/detail/'
+                f'{stem}__cpython_binding.hpp"')
+            for message in collect_messages(idl_file.content):
+                msg_underscore = convert_camel_case_to_lower_case_underscore(
+                    message.structure.namespaced_type.name)
+                register_calls.append(
+                    f'  rosidl_runtime_cpython::register_{msg_underscore}(m);')
+        for dep in sorted(nested_dep_pkgs):
+            dependency_imports.append(
+                f'  py::module_::import("{dep}.msg.experimental._bindings");')
+        module_file = os.path.join(
+            args['output_dir'], 'msg', 'experimental', f'{package_name}__module.cpp')
+        with open(module_file, 'w') as f:
+            f.write(
+                '// generated from rosidl_generator_py (experimental pybind11 module)\n'
+                '// generated code does not contain a copyright notice\n'
+                '\n'
+                '#include <pybind11/pybind11.h>\n'
+                '\n'
+                '#include "rosidl_runtime_cpython/message_handle.hpp"\n'
+                + '\n'.join(module_includes) + '\n'
+                '\n'
+                'PYBIND11_MODULE(_bindings, m)\n'
+                '{\n'
+                '  py::module_::import("rosidl_runtime_cpython._primitives");\n'
+                + '\n'.join(dependency_imports) + '\n'
+                + '\n'.join(register_calls) + '\n'
+                '}\n')
+        generated_files.append(module_file)
 
     # expand templates per available typesupport implementation
     template_dir = args['template_dir']

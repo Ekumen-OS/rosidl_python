@@ -20,7 +20,6 @@ Ported from test_string.py to the new native API (ADR-002/004).
 import numpy as np
 import pytest
 
-from rosidl_runtime_cpython.dtype import Dtype
 from rosidl_runtime_cpython._primitives import String, UInt8, WString
 
 
@@ -34,9 +33,6 @@ class TestString:
         s = String()
         assert len(s) == 0
         assert str(s) == ''
-
-    def test_dtype(self):
-        assert String().dtype is Dtype.CHAR
 
     def test_construct_from_str(self):
         s = String('hello')
@@ -154,7 +150,7 @@ class TestString:
     def test_setitem_slice_aliasing_self(self):
         s = String()
         s.assign('ABCDE')
-        s[1:4] = s[0:3]  # StringWrapper RHS (slice returns a String)
+        s[1:4] = s[0:3]  # str RHS (slices return str)
         assert str(s) == 'AABCE'
         s.assign('ABCDE')
         s[0:5] = s  # StringWrapper RHS aliasing self, matching length
@@ -321,33 +317,33 @@ class TestString:
 
     def test_add_string(self):
         r = String('ab') + String('cd')
-        assert isinstance(r, String)
-        assert str(r) == 'abcd'
+        assert isinstance(r, str)
+        assert r == 'abcd'
 
     def test_add_str(self):
         r = String('ab') + 'cd'
-        assert isinstance(r, String)
-        assert str(r) == 'abcd'
+        assert isinstance(r, str)
+        assert r == 'abcd'
 
     def test_radd_str(self):
         r = 'ab' + String('cd')
-        assert isinstance(r, String)
-        assert str(r) == 'abcd'
+        assert isinstance(r, str)
+        assert r == 'abcd'
 
     def test_add_returns_new_string(self):
         a = String('ab')
         b = a + 'cd'
         assert str(a) == 'ab'
-        assert str(b) == 'abcd'
+        assert b == 'abcd'
 
     def test_mul(self):
-        assert str(String('ab') * 3) == 'ababab'
+        assert (String('ab') * 3) == 'ababab'
 
     def test_rmul(self):
-        assert str(3 * String('ab')) == 'ababab'
+        assert (3 * String('ab')) == 'ababab'
 
     def test_mul_zero(self):
-        assert str(String('ab') * 0) == ''
+        assert (String('ab') * 0) == ''
 
     def test_iadd_str(self):
         s = String('ab')
@@ -417,9 +413,6 @@ class TestWString:
         s = WString()
         assert len(s) == 0
         assert str(s) == ''
-
-    def test_dtype(self):
-        assert WString().dtype is Dtype.WCHAR
 
     def test_construct_from_str(self):
         s = WString('héllo')
@@ -590,21 +583,21 @@ class TestWString:
 
     def test_add_wstring(self):
         r = WString('ab') + WString('cd')
-        assert isinstance(r, WString)
-        assert str(r) == 'abcd'
+        assert isinstance(r, str)
+        assert r == 'abcd'
 
     def test_add_str(self):
         r = WString('ab') + 'cd'
-        assert isinstance(r, WString)
-        assert str(r) == 'abcd'
+        assert isinstance(r, str)
+        assert r == 'abcd'
 
     def test_radd_str(self):
         r = 'ab' + WString('cd')
-        assert isinstance(r, WString)
-        assert str(r) == 'abcd'
+        assert isinstance(r, str)
+        assert r == 'abcd'
 
     def test_mul(self):
-        assert str(WString('ab') * 3) == 'ababab'
+        assert (WString('ab') * 3) == 'ababab'
 
     def test_iadd_str(self):
         s = WString('ab')

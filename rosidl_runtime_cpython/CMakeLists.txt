@@ -72,7 +72,13 @@ install(TARGETS _raw_buffer_cpp
 # ---------------------------------------------------------------------------
 # C++ extension: rosidl_runtime_cpython._primitives  (native typed wrappers)
 # ---------------------------------------------------------------------------
-pybind11_add_module(_primitives src/primitives.cpp)
+pybind11_add_module(_primitives
+  src/primitives.cpp
+  src/scalar.cpp
+  src/string.cpp
+  src/sequence.cpp
+  src/array.cpp
+)
 target_include_directories(_primitives PRIVATE
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
   ${rosidl_runtime_c_INCLUDE_DIRS}
@@ -99,6 +105,15 @@ install(
   DIRECTORY include/
   DESTINATION include
 )
+# The wrapper headers in src/ are the shared binding infrastructure that
+# generated message bindings (rosidl_generator_cpython) include; install them
+# under include/rosidl_runtime_cpython/ so generated code can use the
+# installed path.
+install(
+  DIRECTORY src/
+  DESTINATION include/rosidl_runtime_cpython
+  FILES_MATCHING PATTERN "*.hpp"
+)
 ament_export_include_directories(include)
 
 # ---------------------------------------------------------------------------
@@ -108,17 +123,32 @@ if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()
 
+  # Test-only extension: simulated experimental messages proving the
+  # MessageHandleBase pattern (Phase 1B). Built and installed under
+  # BUILD_TESTING so the pytest suite can import it.
+  pybind11_add_module(_simulated
+    test/rosidl_runtime_cpython/simulated_message.cpp
+  )
+  target_include_directories(_simulated PRIVATE
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>"
+    ${rosidl_runtime_c_INCLUDE_DIRS}
+  )
+  target_link_libraries(_simulated PRIVATE
+    rosidl_runtime_cpp::rosidl_runtime_cpp
+  )
+  set_target_properties(_simulated PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY $<1:${CMAKE_CURRENT_BINARY_DIR}/rosidl_runtime_cpython>
+  )
+  install(TARGETS _simulated
+    DESTINATION "${PYTHON_INSTALL_DIR}/rosidl_runtime_cpython"
+  )
+
   find_package(ament_cmake_pytest REQUIRED)
   set(_pytest_tests
-    test/rosidl_runtime_cpython/test_dtype.py
-    test/rosidl_runtime_cpython/test_scalar.py
-    test/rosidl_runtime_cpython/test_primitives.py
     test/rosidl_runtime_cpython/test_primitives_string.py
-    test/rosidl_runtime_cpython/test_array.py
-    test/rosidl_runtime_cpython/test_sequence.py
-    test/rosidl_runtime_cpython/test_string.py
-    test/rosidl_runtime_cpython/test_copy.py
-    test/rosidl_runtime_cpython/test_raw_buffer_cpp.py
+    test/rosidl_runtime_cpython/test_primitives_sequence.py
+    test/rosidl_runtime_cpython/test_primitives_reference.py
+    test/rosidl_runtime_cpython/test_message_handle.py
   )
   foreach(_test_path ${_pytest_tests})
     get_filename_component(_test_name ${_test_path} NAME_WE)

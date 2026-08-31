@@ -12,37 +12,49 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/// Native statically typed scalar and string wrappers (Phase 1).
-/// Wrapper implementations live in scalar_wrapper.hpp / string_wrapper.hpp;
-/// this TU only registers them.
+/// Native statically typed scalar, string, sequence, and array wrappers
+/// (Phase 1A: non-owning reference views, ADR-011). Each family lives in its
+/// own .hpp/.cpp pair (scalar, string, sequence, array); this TU is the final
+/// module: it registers every family and exposes the microbenchmarks.
 
-#include "scalar_wrapper.hpp"
-#include "string_wrapper.hpp"
+#include <chrono>
+
+#include "array.hpp"
+#include "scalar.hpp"
+#include "sequence.hpp"
+#include "string.hpp"
+
+namespace rosidl_runtime_cpython
+{
+
+// Microbenchmark (informational; Phase 1A gate): virtual dispatch through the
+// type-erased reference interfaces. Measures the per-op overhead of the
+// non-owning view layer (ArrayInterface::at) in microseconds for
+// `iterations` calls.
+double bench_virtual_dispatch(size_t iterations)
+{
+  ArrayData<uint8_t, 4> ad;
+  auto start = std::chrono::steady_clock::now();
+  volatile uint8_t sink = 0;
+  for (size_t i = 0; i < iterations; ++i) {
+    sink += ad.wrapper.get(0);
+  }
+  auto end = std::chrono::steady_clock::now();
+  (void)sink;
+  return std::chrono::duration<double, std::micro>(end - start).count();
+}
+
+}  // namespace rosidl_runtime_cpython
 
 PYBIND11_MODULE(_primitives, m)
 {
   using namespace rosidl_runtime_cpython;
-  m.doc() = "Native statically typed scalar wrappers (Phase 1)";
+  m.doc() = "Native statically typed non-owning wrappers (Phase 1A)";
 
-  register_scalar<bool>(m, "Bool");
-  register_scalar<uint8_t>(m, "UInt8");
-  register_scalar<uint16_t>(m, "UInt16");
-  register_scalar<uint32_t>(m, "UInt32");
-  register_scalar<uint64_t>(m, "UInt64");
-  register_scalar<int8_t>(m, "Int8");
-  register_scalar<int16_t>(m, "Int16");
-  register_scalar<int32_t>(m, "Int32");
-  register_scalar<int64_t>(m, "Int64");
-  register_scalar<float>(m, "Float32");
-  register_scalar<double>(m, "Float64");
-  register_scalar<long double>(m, "LongDouble");
+  m.def("bench_virtual_dispatch", &bench_virtual_dispatch, py::arg("iterations"));
 
-  // Aliases for the shared UInt8 class (ADR-004 aliasing acceptance).
-  m.attr("Char") = m.attr("UInt8");
-  m.attr("Byte") = m.attr("UInt8");
-  m.attr("Octet") = m.attr("UInt8");
-
-  // Unbounded String / WString (ADR-004).
-  register_string<char>(m, "String");
-  register_string<char16_t>(m, "WString");
+  register_scalars(m);
+  register_strings(m);
+  register_sequences(m);
+  register_arrays(m);
 }

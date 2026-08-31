@@ -13,157 +13,34 @@
 // limitations under the License.
 
 /// Native statically typed scalar wrappers over rosidl_runtime_cpp::Scalar<T>
-/// (ADR-001/002/003/004): checked coercion, numpy promotion, buffer/NumPy
-/// views, as_builtin/from_builtin.
+/// (ADR-001/002/003/004/011): non-owning reference views with checked
+/// coercion, numpy promotion, buffer/NumPy views, as_builtin/from_builtin,
+/// and test-only .Make() factories (aliasing shared_ptr fixtures).
 
-#ifndef ROSIDL_RUNTIME_CPYTHON__SRC__SCALAR_WRAPPER_HPP_
-#define ROSIDL_RUNTIME_CPYTHON__SRC__SCALAR_WRAPPER_HPP_
+#ifndef ROSIDL_RUNTIME_CPYTHON__SRC__SCALAR_HPP_
+#define ROSIDL_RUNTIME_CPYTHON__SRC__SCALAR_HPP_
 
 #include "primitives_common.hpp"
 
 namespace rosidl_runtime_cpython
 {
 
-// ============================================================================
-// Coercion (ADR-003)
-// ============================================================================
-
-// Range-checked conversion of a Python int to an integer target.
-template<typename T>
-T coerce_int_to_integer(py::handle h)
-{
-  static_assert(std::is_integral_v<T> && !std::is_same_v<T, bool>);
-  if constexpr (std::is_signed_v<T>) {
-    long long v = PyLong_AsLongLong(h.ptr());
-    if (v == -1 && PyErr_Occurred()) {
-      PyErr_Clear();
-      raise_overflow("value out of range for target type");
-    }
-    constexpr long long lo = static_cast<long long>(std::numeric_limits<T>::min());
-    constexpr long long hi = static_cast<long long>(std::numeric_limits<T>::max());
-    if (v < lo || v > hi) {
-      raise_overflow("value out of range for target type");
-    }
-    return static_cast<T>(v);
-  } else {
-    // Unsigned target: detect negative values explicitly (py::cast to
-    // unsigned long long would otherwise fail with a generic cast error).
-    long long sv = PyLong_AsLongLong(h.ptr());
-    if (sv == -1 && PyErr_Occurred()) {
-      PyErr_Clear();
-      // Too large for long long: use the unsigned path.
-      unsigned long long uv = PyLong_AsUnsignedLongLong(h.ptr());
-      if (uv == static_cast<unsigned long long>(-1) && PyErr_Occurred()) {
-        throw py::error_already_set();
-      }
-      constexpr unsigned long long hi = static_cast<unsigned long long>(std::numeric_limits<T>::max());
-      if (uv > hi) {
-        raise_overflow("value out of range for target type");
-      }
-      return static_cast<T>(uv);
-    }
-    if (sv < 0) {
-      raise_overflow("negative value for unsigned target");
-    }
-    constexpr unsigned long long hi = static_cast<unsigned long long>(std::numeric_limits<T>::max());
-    if (static_cast<unsigned long long>(sv) > hi) {
-      raise_overflow("value out of range for target type");
-    }
-    return static_cast<T>(sv);
-  }
-}
-
-// Range-checked conversion of a Python int/float to a float target.
-template<typename T>
-T coerce_number_to_float(py::handle h)
-{
-  static_assert(std::is_floating_point_v<T>);
-  double v;
-  if (py::isinstance<py::int_>(h)) {
-    v = PyLong_AsDouble(h.ptr());
-    if (v == -1.0 && PyErr_Occurred()) {
-      PyErr_Clear();
-      raise_overflow("value out of range for target type");
-    }
-  } else {
-    v = PyFloat_AsDouble(h.ptr());
-    if (v == -1.0 && PyErr_Occurred()) {
-      throw py::error_already_set();
-    }
-  }
-  if (std::isnan(static_cast<double>(v)) || std::isinf(static_cast<double>(v))) {
-    return static_cast<T>(v);  // NaN/Inf accepted for float targets
-  }
-  if (v > static_cast<long double>(std::numeric_limits<T>::max()) ||
-    v < -static_cast<long double>(std::numeric_limits<T>::max()))
-  {
-    raise_overflow("value out of range for target type");
-  }
-  return static_cast<T>(v);
-}
-
-// Coerce a Python object to T per ADR-003. `is_aliased_uint8` enables the
-// 1-char ASCII str / 1-byte bytes forms for the shared UInt8 class.
-template<typename T>
-T coerce_scalar(py::handle h, bool is_aliased_uint8)
-{
-  if (py::isinstance<py::bool_>(h)) {
-    if constexpr (std::is_same_v<T, bool>) {
-      return py::cast<bool>(h);
-    }
-    throw py::type_error("bool is only accepted for bool targets");
-  }
-  if (py::isinstance<py::int_>(h)) {
-    if constexpr (std::is_same_v<T, bool>) {
-      throw py::type_error("int is not accepted for bool targets");
-    } else if constexpr (std::is_integral_v<T>) {
-      return coerce_int_to_integer<T>(h);
-    } else {
-      return coerce_number_to_float<T>(h);
-    }
-  }
-  if (py::isinstance<py::float_>(h)) {
-    if constexpr (std::is_same_v<T, bool>) {
-      throw py::type_error("float is not accepted for bool targets");
-    } else if constexpr (std::is_integral_v<T>) {
-      throw py::type_error("lossy float to integer conversion is rejected");
-    } else {
-      return coerce_number_to_float<T>(h);
-    }
-  }
-  if (py::isinstance<py::str>(h)) {
-    if constexpr (std::is_same_v<T, uint8_t>) {
-      if (is_aliased_uint8) {
-        std::string s = py::cast<std::string>(h);
-        if (s.size() == 1 && static_cast<unsigned char>(s[0]) < 128) {
-          return static_cast<T>(static_cast<unsigned char>(s[0]));
-        }
-        throw py::value_error("char/uint8 accepts a 1-character ASCII string");
-      }
-    }
-    throw py::type_error("str is not accepted for this target type");
-  }
-  if (py::isinstance<py::bytes>(h) || py::isinstance<py::bytearray>(h)) {
-    if constexpr (std::is_same_v<T, uint8_t>) {
-      if (is_aliased_uint8) {
-        std::string b = py::cast<std::string>(h);
-        if (b.size() == 1) {
-          return static_cast<T>(static_cast<unsigned char>(b[0]));
-        }
-        throw py::value_error("char/uint8 accepts a 1-byte buffer");
-      }
-    }
-    throw py::type_error("bytes is not accepted for this target type");
-  }
-  throw py::type_error("unsupported value type for scalar target");
-}
-
-// ============================================================================
-
-// Forward declarations (defined after the class).
+// Forward declaration (defined below).
 template<typename T>
 class ScalarWrapper;
-py::object make_wrapper(Kind k, const ValueVariant & v);
+
+// Fixture data owner for standalone scalars (test-only .Make() factories,
+// ADR-011): the owner holds the Scalar<T>; the wrapper is a non-owning view.
+template<typename T>
+struct ScalarData
+{
+  Scalar<T> data;
+  ScalarWrapper<T> wrapper;
+  explicit ScalarData(T value)
+  : data(value), wrapper(&data)
+  {
+  }
+};
 
 template<typename T>
 class ScalarWrapper
@@ -171,29 +48,40 @@ class ScalarWrapper
 public:
   static constexpr Kind kind = TypeKind<T>::value;
 
-  explicit ScalarWrapper(T v = T{})
-  : value_(v)
+  // Non-owning: references existing Scalar<T> storage (ADR-011). `parent` is
+  // the Python parent object (message handle) that keeps the storage alive;
+  // empty for standalone fixtures.
+  explicit ScalarWrapper(Scalar<T> * data, py::object parent = {})
+  : data_(data), parent_(std::move(parent))
   {
+  }
+
+  // Test-only factory: creates a fixture owner and returns an aliasing
+  // shared_ptr to the non-owning wrapper (ADR-011).
+  static std::shared_ptr<ScalarWrapper<T>> make(T value)
+  {
+    auto owner = std::make_shared<ScalarData<T>>(value);
+    return std::shared_ptr<ScalarWrapper<T>>(owner, &owner->wrapper);
   }
 
   T get() const
   {
-    return value_.get();
+    return data_->get();
   }
 
   void set(T v)
   {
-    value_ = v;
+    data_->get() = v;
   }
 
   Scalar<T> & scalar()
   {
-    return value_;
+    return *data_;
   }
 
   const Scalar<T> & scalar() const
   {
-    return value_;
+    return *data_;
   }
 
   // ---- as_builtin / from_builtin ----------------------------------------
@@ -338,7 +226,7 @@ public:
     // Expose the raw bytes (itemsize elements of uint8), matching the legacy
     // Scalar's byte-level buffer semantics: len(memoryview(s)) == itemsize.
     return py::buffer_info(
-      const_cast<T *>(&value_.get()),
+      const_cast<T *>(&data_->get()),
       sizeof(uint8_t),
       py::format_descriptor<uint8_t>::format(),
       1,
@@ -350,11 +238,11 @@ public:
   {
     py::object self_obj = py::reinterpret_borrow<py::object>(
       py::cast(this, py::return_value_policy::reference));
-    py::array_t<T> arr({1}, &value_.get(), self_obj);
+    py::array_t<T> arr({1}, &data_->get(), self_obj);
     return arr;
   }
 
-  // ---- arithmetic --------------------------------------------------------
+  // ---- arithmetic (builtin-return policy, ADR-002 amendment) --------------
 
   py::object binary(py::handle other, Op op) const
   {
@@ -363,7 +251,7 @@ public:
       return not_implemented();
     }
     ValueVariant result = apply_binary(n->self, n->other, op);
-    return make_wrapper(n->promoted, result);
+    return value_to_py(n->promoted, result);
   }
 
   py::object rbinary(py::handle other, Op op) const
@@ -373,7 +261,7 @@ public:
       return not_implemented();
     }
     ValueVariant result = apply_binary(n->other, n->self, op);
-    return make_wrapper(n->promoted, result);
+    return value_to_py(n->promoted, result);
   }
 
   py::object inplace(py::handle other, Op op)
@@ -382,32 +270,34 @@ public:
     if (!n) {
       return not_implemented();
     }
+    ValueVariant result = apply_binary(n->self, n->other, op);
     if (n->promoted == kind) {
-      ValueVariant result = apply_binary(n->self, n->other, op);
+      // Result fits the wrapper's storage: mutate in place, return self.
       set(std::get<T>(result));
       return py::cast(this, py::return_value_policy::reference);
     }
-    ValueVariant result = apply_binary(n->self, n->other, op);
-    return make_wrapper(n->promoted, result);
+    // Promoted kind differs: return the builtin result (Python rebinds the
+    // name; the underlying storage is unchanged).
+    return value_to_py(n->promoted, result);
   }
 
   py::object unary(Op op) const
   {
     ValueVariant result = apply_unary(make_variant<kind>(get()), op);
-    return make_wrapper(kind, result);
+    return value_to_py(kind, result);
   }
 
   py::object abs_() const
   {
     if constexpr (std::is_same_v<T, bool>) {
-      return py::cast(ScalarWrapper<T>(get()));
+      return py::bool_(get());
     } else if constexpr (std::is_integral_v<T>) {
       using UPT = std::make_unsigned_t<T>;
       T v = get();
       T r = v < 0 ? static_cast<T>(static_cast<UPT>(0) - static_cast<UPT>(v)) : v;
-      return py::cast(ScalarWrapper<T>(r));
+      return value_to_py(kind, make_variant<kind>(r));
     } else {
-      return py::cast(ScalarWrapper<T>(static_cast<T>(std::fabs(get()))));
+      return py::float_(static_cast<double>(std::fabs(get())));
     }
   }
 
@@ -480,51 +370,13 @@ private:
 
   static std::string class_name();
 
-  Scalar<T> value_;
+  Scalar<T> * data_;
+  py::object parent_;  // anchor (empty for standalone fixtures)
 };
-
-inline py::object make_wrapper(Kind k, const ValueVariant & v)
-{
-  switch (k) {
-    case Kind::Bool: return py::cast(ScalarWrapper<bool>(std::get<bool>(v)));
-    case Kind::UInt8: return py::cast(ScalarWrapper<uint8_t>(std::get<uint8_t>(v)));
-    case Kind::UInt16: return py::cast(ScalarWrapper<uint16_t>(std::get<uint16_t>(v)));
-    case Kind::UInt32: return py::cast(ScalarWrapper<uint32_t>(std::get<uint32_t>(v)));
-    case Kind::UInt64: return py::cast(ScalarWrapper<uint64_t>(std::get<uint64_t>(v)));
-    case Kind::Int8: return py::cast(ScalarWrapper<int8_t>(std::get<int8_t>(v)));
-    case Kind::Int16: return py::cast(ScalarWrapper<int16_t>(std::get<int16_t>(v)));
-    case Kind::Int32: return py::cast(ScalarWrapper<int32_t>(std::get<int32_t>(v)));
-    case Kind::Int64: return py::cast(ScalarWrapper<int64_t>(std::get<int64_t>(v)));
-    case Kind::Float32: return py::cast(ScalarWrapper<float>(std::get<float>(v)));
-    case Kind::Float64: return py::cast(ScalarWrapper<double>(std::get<double>(v)));
-    case Kind::LongDouble: return py::cast(ScalarWrapper<long double>(std::get<long double>(v)));
-    default: throw std::runtime_error("unknown kind");
-  }
-}
 
 // ============================================================================
 // Registration
 // ============================================================================
-
-inline py::object dtype_for_kind(Kind k)
-{
-  static py::object dtype_enum = py::module_::import("rosidl_runtime_cpython.dtype").attr("Dtype");
-  switch (k) {
-    case Kind::Bool: return dtype_enum.attr("BOOL");
-    case Kind::UInt8: return dtype_enum.attr("UINT8");
-    case Kind::UInt16: return dtype_enum.attr("UINT16");
-    case Kind::UInt32: return dtype_enum.attr("UINT32");
-    case Kind::UInt64: return dtype_enum.attr("UINT64");
-    case Kind::Int8: return dtype_enum.attr("INT8");
-    case Kind::Int16: return dtype_enum.attr("INT16");
-    case Kind::Int32: return dtype_enum.attr("INT32");
-    case Kind::Int64: return dtype_enum.attr("INT64");
-    case Kind::Float32: return dtype_enum.attr("FLOAT32");
-    case Kind::Float64: return dtype_enum.attr("FLOAT64");
-    case Kind::LongDouble: return dtype_enum.attr("LONG_DOUBLE");
-    default: throw std::runtime_error("unknown kind");
-  }
-}
 
 template<typename T>
 std::string ScalarWrapper<T>::class_name()
@@ -549,18 +401,21 @@ std::string ScalarWrapper<T>::class_name()
 template<typename T>
 void register_scalar(py::module_ & m, const char * name)
 {
-  py::class_<ScalarWrapper<T>> cls(m, name, py::buffer_protocol());
+  py::class_<ScalarWrapper<T>, std::shared_ptr<ScalarWrapper<T>>> cls(
+    m, name, py::buffer_protocol());
   cls
     .def(py::init([](py::handle v) {
       if (v.is_none()) {
-        return new ScalarWrapper<T>(T{});
+        return ScalarWrapper<T>::make(T{});
       }
-      return new ScalarWrapper<T>(coerce_scalar<T>(v, std::is_same_v<T, uint8_t>));
+      return ScalarWrapper<T>::make(coerce_scalar<T>(v, std::is_same_v<T, uint8_t>));
     }), py::arg("value") = py::none())
+    .def_static("Make", [](py::handle v) {
+      // Same coercion as the constructor: range-checked (OverflowError on
+      // out-of-range), aliased uint8 accepts 1-char str / 1-byte bytes.
+      return ScalarWrapper<T>::make(coerce_scalar<T>(v, std::is_same_v<T, uint8_t>));
+    }, py::arg("value"))
     .def_property("value", &ScalarWrapper<T>::get_value, &ScalarWrapper<T>::set_value)
-    .def_property_readonly("dtype", [](const ScalarWrapper<T> &) {
-      return dtype_for_kind(ScalarWrapper<T>::kind);
-    })
     .def("as_builtin", &ScalarWrapper<T>::as_builtin)
     .def("from_builtin", &ScalarWrapper<T>::from_builtin, py::arg("value"))
     .def("__int__", &ScalarWrapper<T>::int_)
@@ -622,6 +477,9 @@ void register_scalar(py::module_ & m, const char * name)
     .def("__irshift__", [](ScalarWrapper<T> & s, py::handle o) { return s.inplace(o, Op::RShift); });
 }
 
+// Registers every scalar wrapper class (defined in scalar.cpp).
+void register_scalars(py::module_ & m);
+
 }  // namespace rosidl_runtime_cpython
 
-#endif  // ROSIDL_RUNTIME_CPYTHON__SRC__SCALAR_WRAPPER_HPP_
+#endif  // ROSIDL_RUNTIME_CPYTHON__SRC__SCALAR_HPP_

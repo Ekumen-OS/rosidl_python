@@ -400,3 +400,47 @@ def test_iterator_keeps_fixture_alive():
     del s
     gc.collect()
     assert list(it) == [1, 2, 3]
+
+# ---------------------------------------------------------------------------
+# Phase 3A: list-semantics methods (array) and scalar numeric methods
+# ---------------------------------------------------------------------------
+
+def test_array_eq_ne_ordering():
+    a = Int32Array.Make(3, [1, 2, 3])
+    assert a == Int32Array.Make(3, [1, 2, 3])
+    assert a == [1, 2, 3]
+    assert a != Int32Array.Make(3, [1, 2, 4])
+    assert a < Int32Array.Make(3, [1, 2, 4])
+    assert Int32Array.Make(3, [1, 2, 4]) > a
+
+
+def test_array_index_count_sort_reverse_fill_assign():
+    a = Int32Array.Make(4, [3, 1, 2, 1])
+    assert a.index(1) == 1
+    assert a.count(1) == 2
+    a.sort()
+    assert a.as_builtin() == [1, 1, 2, 3]
+    a.reverse()
+    assert a.as_builtin() == [3, 2, 1, 1]
+    a.fill(7)
+    assert a.as_builtin() == [7, 7, 7, 7]
+    a.assign([1, 2, 3, 4])
+    assert a.as_builtin() == [1, 2, 3, 4]
+
+
+def test_scalar_ne_divmod_round_ceil_floor_trunc_format():
+    i = Int32.Make(5)
+    assert i != Int32.Make(6)
+    assert divmod(i, 2) == (2, 1)
+    assert round(i) == 5
+    assert round(i, -1) == 0
+    assert i.__ceil__() == 5
+    assert i.__floor__() == 5
+    assert i.__trunc__() == 5
+    assert format(i, '04d') == '0005'
+    f = Float64.Make(3.7)
+    assert round(f) == 4
+    assert f.__ceil__() == 4
+    assert f.__floor__() == 3
+    assert f.__trunc__() == 3
+    assert format(f, '.2f') == '3.70'

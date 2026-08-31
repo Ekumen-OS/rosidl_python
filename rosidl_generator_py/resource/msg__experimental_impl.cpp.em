@@ -2,6 +2,7 @@
 @# generated code does not contain a copyright notice
 @{
 from rosidl_pycommon import convert_camel_case_to_lower_case_underscore
+from rosidl_parser.definition import AbstractGenericString
 from rosidl_parser.definition import AbstractNestedType
 from rosidl_parser.definition import AbstractSequence
 from rosidl_parser.definition import AbstractString
@@ -158,7 +159,13 @@ void register_@(msg_underscore)(py::module_ & m)
 @[if msg in element_messages]@
   register_@(msg_underscore)_containers(m);
 @[end if]@
-  py::class_<@(msg)Handle, std::shared_ptr<@(msg)Handle>>(m, "@(msg)")
+  py::class_<@(msg)Handle, std::shared_ptr<@(msg)Handle>> cls(m, "@(msg)");
+@[for constant in message.constants]@
+  cls.def_property_readonly_static("@(constant.name)",
+    [](py::object) { return @(constant_to_cpp(constant)); });
+@[end for]@
+  register_@(msg_underscore)_constraints(cls);
+  cls
     .def(py::init(&@(msg)Handle::create))
 @[for member in message.structure.members]@
 @[  if member.name != EMPTY_STRUCTURE_REQUIRED_MEMBER_NAME]@
@@ -171,6 +178,48 @@ void register_@(msg_underscore)(py::module_ & m)
     .def("_reset", &@(msg)Handle::reset, py::arg("_init"))
     .def("clear", &@(msg)Handle::clear)
     .def("__repr__", &@(msg)Handle::repr);
+}
+
+// Per-message Constraints class (per-member constraint fields).
+void register_@(msg_underscore)_constraints(
+  py::class_<@(msg)Handle, std::shared_ptr<@(msg)Handle>> & cls)
+{
+  py::class_<@(msg_cpp)::Constraints>(cls, "Constraints")
+    .def(py::init<>())
+@[for member in message.structure.members]@
+@[  if member.name != EMPTY_STRUCTURE_REQUIRED_MEMBER_NAME]@
+@[    if member_constraint_type(member)]@
+    .def_readonly("@(member.name)", &@(msg_cpp)::Constraints::@(member.name))
+@[    end if]@
+@[  end if]@
+@[end for]@
+    .def("__eq__", [](const @(msg_cpp)::Constraints & self, py::handle other) {
+      if (!py::isinstance<@(msg_cpp)::Constraints>(other)) {
+        return false;
+      }
+      return self == py::cast<const @(msg_cpp)::Constraints &>(other);
+    })
+    .def("__repr__", [](const @(msg_cpp)::Constraints & self) {
+      return std::string("@(msg).Constraints()");
+    });
+// Sequence constraint for sequences/arrays of this message type. Registered
+  // unconditionally: a message used as a sequence element only in another
+  // package still needs its SequenceConstraint<Msg> bound here.
+  py::class_<rosidl_runtime_cpp::SequenceConstraint<@(msg_cpp)>>(
+    cls, "@(msg)SequenceConstraint")
+    .def(py::init<>())
+    .def_readonly("size", &rosidl_runtime_cpp::SequenceConstraint<@(msg_cpp)>::size)
+    .def_readonly("element", &rosidl_runtime_cpp::SequenceConstraint<@(msg_cpp)>::element)
+    .def("__eq__", [](const rosidl_runtime_cpp::SequenceConstraint<@(msg_cpp)> & self,
+      py::handle other) {
+      if (!py::isinstance<rosidl_runtime_cpp::SequenceConstraint<@(msg_cpp)>>(other)) {
+        return false;
+      }
+      return self == py::cast<const rosidl_runtime_cpp::SequenceConstraint<@(msg_cpp)> &>(other);
+    })
+    .def("__repr__", [](const rosidl_runtime_cpp::SequenceConstraint<@(msg_cpp)> & self) {
+      return "@(msg)SequenceConstraint(size=" + std::to_string(self.size) + ")";
+    });
 }
 
 @[if msg in element_messages]@
@@ -188,9 +237,22 @@ void register_@(msg_underscore)_containers(py::module_ & m)
     .def("__len__", &SequenceWrapper<@(msg_cpp)>::len)
     .def("__getitem__", &SequenceWrapper<@(msg_cpp)>::getitem)
     .def("__setitem__", &SequenceWrapper<@(msg_cpp)>::setitem)
+    .def("__delitem__", &SequenceWrapper<@(msg_cpp)>::delitem)
     .def("__iter__", &SequenceWrapper<@(msg_cpp)>::iter)
     .def("__reversed__", &SequenceWrapper<@(msg_cpp)>::reversed)
     .def("__contains__", &SequenceWrapper<@(msg_cpp)>::contains)
+    .def("__eq__", &SequenceWrapper<@(msg_cpp)>::eq)
+    .def("__ne__", &SequenceWrapper<@(msg_cpp)>::ne)
+    .def("__add__", &SequenceWrapper<@(msg_cpp)>::add)
+    .def("__radd__", &SequenceWrapper<@(msg_cpp)>::radd)
+    .def("__iadd__", &SequenceWrapper<@(msg_cpp)>::iadd)
+    .def("__mul__", &SequenceWrapper<@(msg_cpp)>::mul)
+    .def("__rmul__", &SequenceWrapper<@(msg_cpp)>::rmul)
+    .def("__imul__", &SequenceWrapper<@(msg_cpp)>::imul)
+    .def("index", &SequenceWrapper<@(msg_cpp)>::index, py::arg("value"))
+    .def("count", &SequenceWrapper<@(msg_cpp)>::count, py::arg("value"))
+    .def("reverse", &SequenceWrapper<@(msg_cpp)>::reverse)
+    .def("copy", &SequenceWrapper<@(msg_cpp)>::copy)
     .def("append", &SequenceWrapper<@(msg_cpp)>::append, py::arg("value"))
     .def("extend", &SequenceWrapper<@(msg_cpp)>::extend, py::arg("values"))
     .def("insert", &SequenceWrapper<@(msg_cpp)>::insert, py::arg("index"), py::arg("value"))
@@ -218,6 +280,13 @@ void register_@(msg_underscore)_containers(py::module_ & m)
     .def("__iter__", &ArrayWrapper<@(msg_cpp)>::iter)
     .def("__reversed__", &ArrayWrapper<@(msg_cpp)>::reversed)
     .def("__contains__", &ArrayWrapper<@(msg_cpp)>::contains)
+    .def("__eq__", &ArrayWrapper<@(msg_cpp)>::eq)
+    .def("__ne__", &ArrayWrapper<@(msg_cpp)>::ne)
+    .def("index", &ArrayWrapper<@(msg_cpp)>::index, py::arg("value"))
+    .def("count", &ArrayWrapper<@(msg_cpp)>::count, py::arg("value"))
+    .def("reverse", &ArrayWrapper<@(msg_cpp)>::reverse)
+    .def("fill", &ArrayWrapper<@(msg_cpp)>::fill, py::arg("value"))
+    .def("assign", &ArrayWrapper<@(msg_cpp)>::assign, py::arg("value"))
     .def("as_builtin", &ArrayWrapper<@(msg_cpp)>::as_builtin)
     .def("from_builtin", &ArrayWrapper<@(msg_cpp)>::from_builtin, py::arg("value"))
     .def("__repr__", &ArrayWrapper<@(msg_cpp)>::repr);

@@ -622,3 +622,17 @@ class TestWString:
         s = WString()
         s.value = 'héllo'
         assert s.value == 'héllo'
+
+# ---------------------------------------------------------------------------
+# Phase 3A: str-semantics methods
+# ---------------------------------------------------------------------------
+
+def test_string_ne_ordering_hash_mod_format():
+    s = String.Make('abc')
+    assert s != String.Make('abd')
+    assert s < String.Make('abd')
+    assert String.Make('abd') > s
+    assert s <= String.Make('abc')
+    assert hash(s) == hash('abc')
+    assert (String.Make('x%sx') % 'abc') == 'xabcx'
+    assert format(s, '>5') == '  abc'

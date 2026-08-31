@@ -395,3 +395,62 @@ def test_from_builtin_roundtrip():
 
 def test_repr():
     assert repr(Int32Sequence([1, 2])) == 'Int32Sequence([1, 2])'
+
+# ---------------------------------------------------------------------------
+# Phase 3A: list-semantics methods
+# ---------------------------------------------------------------------------
+
+def test_sequence_eq_ne_ordering():
+    s = Int32Sequence([1, 2, 3])
+    assert s == Int32Sequence([1, 2, 3])
+    assert s == [1, 2, 3]
+    assert s != Int32Sequence([1, 2, 4])
+    assert s != [1, 2]
+    assert s < Int32Sequence([1, 2, 4])
+    assert s <= [1, 2, 3]
+    assert Int32Sequence([1, 2, 4]) > s
+    assert [1, 2, 3] >= s
+
+
+def test_sequence_delitem():
+    s = Int32Sequence([0, 1, 2, 3, 4, 5])
+    del s[1]
+    assert s.as_builtin() == [0, 2, 3, 4, 5]
+    del s[1:3]
+    assert s.as_builtin() == [0, 4, 5]
+    s = Int32Sequence([0, 1, 2, 3, 4, 5])
+    del s[::2]
+    assert s.as_builtin() == [1, 3, 5]
+    s = Int32Sequence([0, 1, 2, 3, 4, 5])
+    del s[::-2]
+    assert s.as_builtin() == [0, 2, 4]
+
+
+def test_sequence_concat_repeat():
+    s = Int32Sequence([1, 2])
+    assert (s + [3, 4]).as_builtin() == [1, 2, 3, 4]
+    assert ([0] + s).as_builtin() == [0, 1, 2]
+    assert (s * 2).as_builtin() == [1, 2, 1, 2]
+    assert (2 * s).as_builtin() == [1, 2, 1, 2]
+    s2 = Int32Sequence([1, 2])
+    s2 += [3]
+    assert s2.as_builtin() == [1, 2, 3]
+    s3 = Int32Sequence([1, 2])
+    s3 *= 2
+    assert s3.as_builtin() == [1, 2, 1, 2]
+    s4 = Int32Sequence([1, 2])
+    s4 *= 0
+    assert s4.as_builtin() == []
+
+
+def test_sequence_index_count_sort_reverse_copy():
+    s = Int32Sequence([3, 1, 2, 1])
+    assert s.index(1) == 1
+    assert s.count(1) == 2
+    s.sort()
+    assert s.as_builtin() == [1, 1, 2, 3]
+    s.reverse()
+    assert s.as_builtin() == [3, 2, 1, 1]
+    c = s.copy()
+    assert c.as_builtin() == [3, 2, 1, 1]
+    assert c is not s

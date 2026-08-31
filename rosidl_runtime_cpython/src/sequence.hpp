@@ -428,6 +428,236 @@ public:
     return py::bool_(false);
   }
 
+  // ---- comparison (list semantics) ----------------------------------------
+
+  bool eq(py::handle other) const
+  {
+    if (py::isinstance<SequenceWrapper<T>>(other)) {
+      auto & o = py::cast<SequenceWrapper<T> &>(other);
+      if (o.impl_->size() != impl_->size()) {
+        return false;
+      }
+      for (size_t i = 0; i < impl_->size(); ++i) {
+        if (!(impl_->at(i) == o.impl_->at(i))) {
+          return false;
+        }
+      }
+      return true;
+    }
+    std::vector<T> other_vec;
+    if (!materialize(other, other_vec)) {
+      return false;
+    }
+    if (other_vec.size() != impl_->size()) {
+      return false;
+    }
+    for (size_t i = 0; i < impl_->size(); ++i) {
+      if (!(impl_->at(i) == other_vec[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool ne(py::handle other) const
+  {
+    return !eq(other);
+  }
+
+  int compare_lexicographic(py::handle other) const
+  {
+    std::vector<T> other_vec;
+    if (py::isinstance<SequenceWrapper<T>>(other)) {
+      auto & o = py::cast<SequenceWrapper<T> &>(other);
+      const size_t common = std::min(impl_->size(), o.impl_->size());
+      for (size_t i = 0; i < common; ++i) {
+        if (impl_->at(i) < o.impl_->at(i)) {
+          return -1;
+        }
+        if (o.impl_->at(i) < impl_->at(i)) {
+          return 1;
+        }
+      }
+      return impl_->size() < o.impl_->size() ? -1 :
+        (impl_->size() > o.impl_->size() ? 1 : 0);
+    }
+    if (!materialize(other, other_vec)) {
+      throw py::type_error("cannot compare sequence with this type");
+    }
+    const size_t common = std::min(impl_->size(), other_vec.size());
+    for (size_t i = 0; i < common; ++i) {
+      if (impl_->at(i) < other_vec[i]) {
+        return -1;
+      }
+      if (other_vec[i] < impl_->at(i)) {
+        return 1;
+      }
+    }
+    return impl_->size() < other_vec.size() ? -1 :
+      (impl_->size() > other_vec.size() ? 1 : 0);
+  }
+
+  bool lt(py::handle other) const { return compare_lexicographic(other) < 0; }
+  bool le(py::handle other) const { return compare_lexicographic(other) <= 0; }
+  bool gt(py::handle other) const { return compare_lexicographic(other) > 0; }
+  bool ge(py::handle other) const { return compare_lexicographic(other) >= 0; }
+
+  // ---- deletion -----------------------------------------------------------
+
+  void delitem(py::handle index)
+  {
+    if (py::isinstance<py::int_>(index)) {
+      py::ssize_t i = py::cast<py::ssize_t>(index);
+      if (i < 0) {
+        i += static_cast<py::ssize_t>(impl_->size());
+      }
+      if (i < 0 || i >= static_cast<py::ssize_t>(impl_->size())) {
+        throw py::index_error("sequence index out of range");
+      }
+      impl_->erase(static_cast<size_t>(i), 1);
+      return;
+    }
+    py::slice slice = py::cast<py::slice>(index);
+    py::ssize_t start, stop, step, slicelength;
+    if (!slice.compute(static_cast<py::ssize_t>(impl_->size()), &start, &stop, &step, &slicelength)) {
+      throw py::error_already_set();
+    }
+    if (step == 1) {
+      impl_->erase(static_cast<size_t>(start), static_cast<size_t>(slicelength));
+    } else if (step > 0) {
+      // Delete from the end so earlier indices stay valid.
+      for (py::ssize_t k = slicelength - 1; k >= 0; --k) {
+        impl_->erase(static_cast<size_t>(start + k * step), 1);
+      }
+    } else {
+      // Negative step: indices decrease; delete from the front so later
+      // (smaller) indices stay valid.
+      for (py::ssize_t k = 0; k < slicelength; ++k) {
+        impl_->erase(static_cast<size_t>(start + k * step), 1);
+      }
+    }
+  }
+
+  // ---- concatenation / repetition (list semantics) ------------------------
+
+  std::shared_ptr<SequenceWrapper<T>> add(py::handle other) const
+  {
+    auto owner = std::make_shared<SequenceData<T, 0>>();
+    auto w = std::shared_ptr<SequenceWrapper<T>>(owner, &owner->wrapper);
+    for (size_t i = 0; i < impl_->size(); ++i) {
+      w->impl_->push_back(impl_->at(i));
+    }
+    for (auto item : py::iter(other)) {
+      w->impl_->push_back(ElementTraits<T>::from_py(item));
+    }
+    return w;
+  }
+
+  std::shared_ptr<SequenceWrapper<T>> radd(py::handle other) const
+  {
+    auto owner = std::make_shared<SequenceData<T, 0>>();
+    auto w = std::shared_ptr<SequenceWrapper<T>>(owner, &owner->wrapper);
+    for (auto item : py::iter(other)) {
+      w->impl_->push_back(ElementTraits<T>::from_py(item));
+    }
+    for (size_t i = 0; i < impl_->size(); ++i) {
+      w->impl_->push_back(impl_->at(i));
+    }
+    return w;
+  }
+
+  py::object iadd(py::handle other)
+  {
+    extend(other);
+    return py::cast(this, py::return_value_policy::reference);
+  }
+
+  std::shared_ptr<SequenceWrapper<T>> mul(py::handle count) const
+  {
+    py::ssize_t n = py::cast<py::ssize_t>(count);
+    if (n < 0) {
+      n = 0;
+    }
+    auto owner = std::make_shared<SequenceData<T, 0>>();
+    auto w = std::shared_ptr<SequenceWrapper<T>>(owner, &owner->wrapper);
+    for (py::ssize_t rep = 0; rep < n; ++rep) {
+      for (size_t i = 0; i < impl_->size(); ++i) {
+        w->impl_->push_back(impl_->at(i));
+      }
+    }
+    return w;
+  }
+
+  std::shared_ptr<SequenceWrapper<T>> rmul(py::handle count) const
+  {
+    return mul(count);
+  }
+
+  py::object imul(py::handle count)
+  {
+    py::ssize_t n = py::cast<py::ssize_t>(count);
+    if (n <= 0) {
+      impl_->clear();
+      return py::cast(this, py::return_value_policy::reference);
+    }
+    // Materialize self first: growth may reallocate and dangle the source.
+    std::vector<T> tmp;
+    for (size_t i = 0; i < impl_->size(); ++i) {
+      tmp.push_back(impl_->at(i));
+    }
+    for (py::ssize_t rep = 1; rep < n; ++rep) {
+      for (size_t i = 0; i < tmp.size(); ++i) {
+        impl_->push_back(tmp[i]);
+      }
+    }
+    return py::cast(this, py::return_value_policy::reference);
+  }
+
+  // ---- search / transform (list semantics) --------------------------------
+
+  py::ssize_t index(py::handle value) const
+  {
+    T target = ElementTraits<T>::from_py(value);
+    for (size_t i = 0; i < impl_->size(); ++i) {
+      if (impl_->at(i) == target) {
+        return static_cast<py::ssize_t>(i);
+      }
+    }
+    throw py::value_error("value not in sequence");
+  }
+
+  py::ssize_t count(py::handle value) const
+  {
+    T target = ElementTraits<T>::from_py(value);
+    py::ssize_t result = 0;
+    for (size_t i = 0; i < impl_->size(); ++i) {
+      if (impl_->at(i) == target) {
+        ++result;
+      }
+    }
+    return result;
+  }
+
+  void sort()
+  {
+    std::sort(impl_->data(), impl_->data() + impl_->size());
+  }
+
+  void reverse()
+  {
+    std::reverse(impl_->data(), impl_->data() + impl_->size());
+  }
+
+  std::shared_ptr<SequenceWrapper<T>> copy() const
+  {
+    auto owner = std::make_shared<SequenceData<T, 0>>();
+    auto w = std::shared_ptr<SequenceWrapper<T>>(owner, &owner->wrapper);
+    for (size_t i = 0; i < impl_->size(); ++i) {
+      w->impl_->push_back(impl_->at(i));
+    }
+    return w;
+  }
+
   // ---- mutation -----------------------------------------------------------
 
   void append(py::handle value)
@@ -593,6 +823,22 @@ public:
   }
 
 private:
+  // Materialize an iterable into a vector<T>; false on coercion failure.
+  static bool materialize(py::handle h, std::vector<T> & out)
+  {
+    try {
+      for (auto item : py::iter(h)) {
+        out.push_back(ElementTraits<T>::from_py(item));
+      }
+      return true;
+    } catch (const std::exception &) {
+      if (PyErr_Occurred()) {
+        PyErr_Clear();
+      }
+      return false;
+    }
+  }
+
   // Extract a typed (data, count) from a SequenceWrapper<T>, C-contiguous
   // numpy array of dtype T, or C-contiguous buffer source; nullopt otherwise.
   // Primitive-only: message element types have no numpy/buffer representation.
@@ -698,9 +944,27 @@ void register_sequence(py::module_ & m, const char * name)
     .def("__len__", &SequenceWrapper<T>::len)
     .def("__getitem__", &SequenceWrapper<T>::getitem)
     .def("__setitem__", &SequenceWrapper<T>::setitem)
+    .def("__delitem__", &SequenceWrapper<T>::delitem)
     .def("__iter__", &SequenceWrapper<T>::iter)
     .def("__reversed__", &SequenceWrapper<T>::reversed)
     .def("__contains__", &SequenceWrapper<T>::contains)
+    .def("__eq__", &SequenceWrapper<T>::eq)
+    .def("__ne__", &SequenceWrapper<T>::ne)
+    .def("__lt__", &SequenceWrapper<T>::lt)
+    .def("__le__", &SequenceWrapper<T>::le)
+    .def("__gt__", &SequenceWrapper<T>::gt)
+    .def("__ge__", &SequenceWrapper<T>::ge)
+    .def("__add__", &SequenceWrapper<T>::add)
+    .def("__radd__", &SequenceWrapper<T>::radd)
+    .def("__iadd__", &SequenceWrapper<T>::iadd)
+    .def("__mul__", &SequenceWrapper<T>::mul)
+    .def("__rmul__", &SequenceWrapper<T>::rmul)
+    .def("__imul__", &SequenceWrapper<T>::imul)
+    .def("index", &SequenceWrapper<T>::index, py::arg("value"))
+    .def("count", &SequenceWrapper<T>::count, py::arg("value"))
+    .def("sort", &SequenceWrapper<T>::sort)
+    .def("reverse", &SequenceWrapper<T>::reverse)
+    .def("copy", &SequenceWrapper<T>::copy)
     .def("append", &SequenceWrapper<T>::append, py::arg("value"))
     .def("extend", &SequenceWrapper<T>::extend, py::arg("values"))
     .def("insert", &SequenceWrapper<T>::insert, py::arg("index"), py::arg("value"))

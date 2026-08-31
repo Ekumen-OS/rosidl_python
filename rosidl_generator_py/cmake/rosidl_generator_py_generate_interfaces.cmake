@@ -306,6 +306,7 @@ target_include_directories(${_target_name_cpython} PUBLIC
 target_link_libraries(${_target_name_cpython} PRIVATE
   ${rosidl_generate_interfaces_TARGET}__rosidl_generator_cpp
   Python3::Python
+  rosidl_runtime_cpython::rosidl_runtime_cpython_core
 )
 foreach(_pkg_name ${rosidl_generate_interfaces_DEPENDENCY_PACKAGE_NAMES})
   # Link dependency bindings libraries: cross-package nested handle symbols

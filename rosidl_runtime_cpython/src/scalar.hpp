@@ -200,6 +200,90 @@ public:
     return py::bool_(r);
   }
 
+  py::object ne(py::handle other) const
+  {
+    return py::bool_(!py::cast<bool>(eq(other)));
+  }
+
+  py::object divmod(py::handle other) const
+  {
+    py::object q = binary(other, Op::FloorDiv);
+    py::object r = binary(other, Op::Mod);
+    if (q.is_none() || r.is_none()) {
+      return not_implemented();
+    }
+    py::tuple result(2);
+    result[0] = q;
+    result[1] = r;
+    return result;
+  }
+
+  py::object rdivmod(py::handle other) const
+  {
+    py::object q = rbinary(other, Op::FloorDiv);
+    py::object r = rbinary(other, Op::Mod);
+    if (q.is_none() || r.is_none()) {
+      return not_implemented();
+    }
+    py::tuple result(2);
+    result[0] = q;
+    result[1] = r;
+    return result;
+  }
+
+  py::object round_(py::handle ndigits) const
+  {
+    if (ndigits.is_none()) {
+      if constexpr (std::is_integral_v<T>) {
+        return py::int_(get());
+      } else {
+        return py::float_(static_cast<double>(get())).attr("__round__")();
+      }
+    }
+    if constexpr (std::is_integral_v<T>) {
+      return py::int_(get()).attr("__round__")(ndigits);
+    } else {
+      return py::float_(static_cast<double>(get())).attr("__round__")(ndigits);
+    }
+  }
+
+  py::object ceil() const
+  {
+    if constexpr (std::is_integral_v<T>) {
+      return py::int_(get());
+    } else {
+      return py::float_(static_cast<double>(get())).attr("__ceil__")();
+    }
+  }
+
+  py::object floor() const
+  {
+    if constexpr (std::is_integral_v<T>) {
+      return py::int_(get());
+    } else {
+      return py::float_(static_cast<double>(get())).attr("__floor__")();
+    }
+  }
+
+  py::object trunc() const
+  {
+    if constexpr (std::is_integral_v<T>) {
+      return py::int_(get());
+    } else {
+      return py::float_(static_cast<double>(get())).attr("__trunc__")();
+    }
+  }
+
+  py::object format(py::handle spec) const
+  {
+    std::string s = py::cast<std::string>(spec);
+    if constexpr (std::is_integral_v<T>) {
+      return py::int_(get()).attr("__format__")(py::str(s));
+    } else {
+      return py::float_(static_cast<double>(get())).attr("__format__")(py::str(s));
+    }
+  }
+
   py::object hash() const
   {
     // Hash the VALUE only (not (kind, value)): Int32(1) == 1 must imply
@@ -423,6 +507,14 @@ void register_scalar(py::module_ & m, const char * name)
     .def("__index__", &ScalarWrapper<T>::index_)
     .def("__bool__", &ScalarWrapper<T>::bool_)
     .def("__eq__", &ScalarWrapper<T>::eq)
+    .def("__ne__", &ScalarWrapper<T>::ne)
+    .def("__divmod__", &ScalarWrapper<T>::divmod)
+    .def("__rdivmod__", &ScalarWrapper<T>::rdivmod)
+    .def("__round__", &ScalarWrapper<T>::round_, py::arg("ndigits") = py::none())
+    .def("__ceil__", &ScalarWrapper<T>::ceil)
+    .def("__floor__", &ScalarWrapper<T>::floor)
+    .def("__trunc__", &ScalarWrapper<T>::trunc)
+    .def("__format__", &ScalarWrapper<T>::format, py::arg("spec"))
     .def("__lt__", [](const ScalarWrapper<T> & s, py::handle o) { return s.compare(o, "<"); })
     .def("__le__", [](const ScalarWrapper<T> & s, py::handle o) { return s.compare(o, "<="); })
     .def("__gt__", [](const ScalarWrapper<T> & s, py::handle o) { return s.compare(o, ">"); })

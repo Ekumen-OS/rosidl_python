@@ -52,9 +52,12 @@ PYBIND11_MODULE(_primitives, m)
   m.doc() = "Native statically typed non-owning wrappers (Phase 1A)";
 
   m.def("bench_virtual_dispatch", &bench_virtual_dispatch, py::arg("iterations"));
+  m.def("copy_count", []() { return element_copies(); });
+  m.def("reset_copy_count", []() { element_copies() = 0; });
 
   register_scalars(m);
   register_strings(m);
   register_sequences(m);
   register_arrays(m);
+  register_constraints(m);
 }

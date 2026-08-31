@@ -70,6 +70,30 @@ install(TARGETS _raw_buffer_cpp
 )
 
 # ---------------------------------------------------------------------------
+# Core shared library: shared binding infrastructure (copy counter, etc.)
+# consumed by both the _primitives extension and the generated message
+# binding libraries. A regular (non-extension) library so the symbol is
+# exported and shared across DSOs.
+# ---------------------------------------------------------------------------
+add_library(rosidl_runtime_cpython_core SHARED src/core.cpp)
+target_include_directories(rosidl_runtime_cpython_core PUBLIC
+  "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>"
+  "$<INSTALL_INTERFACE:include>"
+  ${rosidl_runtime_c_INCLUDE_DIRS}
+)
+target_link_libraries(rosidl_runtime_cpython_core PUBLIC
+  rosidl_runtime_cpp::rosidl_runtime_cpp
+  Python3::Python
+)
+install(TARGETS rosidl_runtime_cpython_core
+  EXPORT rosidl_runtime_cpython_core_TARGETS
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin
+)
+ament_export_targets(rosidl_runtime_cpython_core_TARGETS HAS_LIBRARY_TARGET)
+
+# ---------------------------------------------------------------------------
 # C++ extension: rosidl_runtime_cpython._primitives  (native typed wrappers)
 # ---------------------------------------------------------------------------
 pybind11_add_module(_primitives
@@ -85,6 +109,7 @@ target_include_directories(_primitives PRIVATE
 )
 target_link_libraries(_primitives PRIVATE
   rosidl_runtime_cpp::rosidl_runtime_cpp
+  rosidl_runtime_cpython_core
 )
 set_target_properties(_primitives PROPERTIES
   LIBRARY_OUTPUT_DIRECTORY $<1:${CMAKE_CURRENT_BINARY_DIR}/rosidl_runtime_cpython>
@@ -135,6 +160,7 @@ if(BUILD_TESTING)
   )
   target_link_libraries(_simulated PRIVATE
     rosidl_runtime_cpp::rosidl_runtime_cpp
+    rosidl_runtime_cpython_core
   )
   set_target_properties(_simulated PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY $<1:${CMAKE_CURRENT_BINARY_DIR}/rosidl_runtime_cpython>

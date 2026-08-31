@@ -648,6 +648,57 @@ public:
     return py::bool_(false);
   }
 
+  py::object ne(py::handle other) const
+  {
+    return py::bool_(!py::cast<bool>(eq(other)));
+  }
+
+  int compare_lexicographic(py::handle other) const
+  {
+    std::string other_str;
+    if (py::isinstance<StringWrapper<CharT>>(other)) {
+      other_str = py::cast<StringWrapper<CharT> &>(other).str_();
+    } else if (py::isinstance<py::str>(other)) {
+      other_str = py::cast<std::string>(other);
+    } else {
+      throw py::type_error("cannot compare string with this type");
+    }
+    const std::string self = str_();
+    if (self < other_str) {
+      return -1;
+    }
+    if (other_str < self) {
+      return 1;
+    }
+    return 0;
+  }
+
+  py::object lt(py::handle other) const { return py::bool_(compare_lexicographic(other) < 0); }
+  py::object le(py::handle other) const { return py::bool_(compare_lexicographic(other) <= 0); }
+  py::object gt(py::handle other) const { return py::bool_(compare_lexicographic(other) > 0); }
+  py::object ge(py::handle other) const { return py::bool_(compare_lexicographic(other) >= 0); }
+
+  py::object hash() const
+  {
+    return py::int_(py::hash(py::str(str_())));
+  }
+
+  py::object mod(py::handle other) const
+  {
+    return py::str(str_()).attr("__mod__")(other);
+  }
+
+  py::object rmod(py::handle other) const
+  {
+    return py::str(str_()).attr("__rmod__")(other);
+  }
+
+  py::object format(py::handle spec) const
+  {
+    std::string s = py::cast<std::string>(spec);
+    return py::str(str_()).attr("__format__")(py::str(s));
+  }
+
   // ---- arithmetic (concatenation / repetition; builtin-return policy) -----
 
   py::object add(py::handle other) const
@@ -811,6 +862,15 @@ void register_string(py::module_ & m, const char * name)
     .def("__str__", &StringWrapper<CharT>::str_)
     .def("__repr__", &StringWrapper<CharT>::repr)
     .def("__eq__", &StringWrapper<CharT>::eq)
+    .def("__ne__", &StringWrapper<CharT>::ne)
+    .def("__lt__", &StringWrapper<CharT>::lt)
+    .def("__le__", &StringWrapper<CharT>::le)
+    .def("__gt__", &StringWrapper<CharT>::gt)
+    .def("__ge__", &StringWrapper<CharT>::ge)
+    .def("__hash__", &StringWrapper<CharT>::hash)
+    .def("__mod__", &StringWrapper<CharT>::mod)
+    .def("__rmod__", &StringWrapper<CharT>::rmod)
+    .def("__format__", &StringWrapper<CharT>::format, py::arg("spec"))
     .def("__len__", &StringWrapper<CharT>::len)
     .def("__getitem__", &StringWrapper<CharT>::getitem)
     .def("__setitem__", &StringWrapper<CharT>::setitem)

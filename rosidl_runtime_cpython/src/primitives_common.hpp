@@ -36,6 +36,7 @@
 #include <variant>
 #include <vector>
 
+#include "rosidl_runtime_cpp/experimental/constraints.hpp"
 #include "rosidl_runtime_cpp/experimental/scalar.hpp"
 #include "rosidl_runtime_cpp/experimental/string.hpp"
 
@@ -479,6 +480,19 @@ T coerce_scalar(py::handle h, bool is_aliased_uint8)
 template<typename T>
 py::object element_to_py(T v);
 
+// Thread-local element-conversion counter for copy-path benchmarks. Every
+// per-element Python<->C++ conversion (from_py/to_py/to_builtin) increments
+// it; bulk numpy paths bypass it entirely (zero-copy). Exposed to Python via
+// _primitives.copy_count()/reset_copy_count().
+//
+// NOTE: declared here but DEFINED in primitives.cpp (single TU). Inline
+// variables and function-local statics in inline functions both get GNU
+// unique symbols (local binding), so each DSO — including the generated
+// message binding libraries — would get its own copy and the benchmark would
+// read a different counter than the bindings increment. A single exported
+// function definition guarantees one shared instance.
+size_t & element_copies();
+
 // Convert an element to a Python object and back. The primary template
 // handles numpy-compatible (primitive) element types: to_py yields a builtin,
 // from_py coerces a builtin. Generated message types specialize this to
@@ -493,18 +507,21 @@ struct ElementTraits
   // Python object (ignored for primitives; anchors message views).
   static py::object to_py(T & v, py::object /*parent*/)
   {
+    ++element_copies();
     return element_to_py(v);
   }
 
   // Convert an element to a Python builtin (as_builtin escape hatch).
   static py::object to_builtin(const T & v)
   {
+    ++element_copies();
     return element_to_py(v);
   }
 
   // Extract an element from a Python object (builtin for primitives).
   static T from_py(py::handle h)
   {
+    ++element_copies();
     return coerce_scalar<T>(h, std::is_same_v<T, uint8_t>);
   }
 };
@@ -813,6 +830,76 @@ py::array_t<T> to_numpy(const std::vector<T> & vec)
     return py::array_t<T>(
       {static_cast<py::ssize_t>(vec.size())}, vec.data());
   }
+}
+
+// ----------------------------------------------------------------------------
+// Constraints (shared binding infrastructure for generated Msg::Constraints)
+// ----------------------------------------------------------------------------
+
+// Bind the shared constraint types. Generated message bindings bind their
+// per-message Constraints classes on top of these.
+template<typename T>
+void bind_sequence_constraint(py::module_ & m, const char * name)
+{
+  py::class_<rosidl_runtime_cpp::SequenceConstraint<T>>(m, name)
+    .def(py::init<>())
+    .def_readonly("size", &rosidl_runtime_cpp::SequenceConstraint<T>::size)
+    .def("__eq__", [](const rosidl_runtime_cpp::SequenceConstraint<T> & self, py::handle other) {
+      if (!py::isinstance<rosidl_runtime_cpp::SequenceConstraint<T>>(other)) {
+        return false;
+      }
+      return self == py::cast<const rosidl_runtime_cpp::SequenceConstraint<T> &>(other);
+    })
+    .def("__repr__", [name](const rosidl_runtime_cpp::SequenceConstraint<T> & self) {
+      return std::string(name) + "(size=" + std::to_string(self.size) + ")";
+    });
+}
+
+inline void register_constraints(py::module_ & m)
+{
+  py::class_<rosidl_runtime_cpp::StringConstraint>(m, "StringConstraint")
+    .def(py::init<>())
+    .def_readonly("size", &rosidl_runtime_cpp::StringConstraint::size)
+    .def("__eq__", [](const rosidl_runtime_cpp::StringConstraint & self, py::handle other) {
+      if (!py::isinstance<rosidl_runtime_cpp::StringConstraint>(other)) {
+        return false;
+      }
+      return self == py::cast<const rosidl_runtime_cpp::StringConstraint &>(other);
+    })
+    .def("__repr__", [](const rosidl_runtime_cpp::StringConstraint & self) {
+      return "StringConstraint(size=" + std::to_string(self.size) + ")";
+    });
+
+  // Sequence constraints for primitive element types (size only).
+  bind_sequence_constraint<bool>(m, "BoolSequenceConstraint");
+  bind_sequence_constraint<uint8_t>(m, "UInt8SequenceConstraint");
+  bind_sequence_constraint<uint16_t>(m, "UInt16SequenceConstraint");
+  bind_sequence_constraint<uint32_t>(m, "UInt32SequenceConstraint");
+  bind_sequence_constraint<uint64_t>(m, "UInt64SequenceConstraint");
+  bind_sequence_constraint<int8_t>(m, "Int8SequenceConstraint");
+  bind_sequence_constraint<int16_t>(m, "Int16SequenceConstraint");
+  bind_sequence_constraint<int32_t>(m, "Int32SequenceConstraint");
+  bind_sequence_constraint<int64_t>(m, "Int64SequenceConstraint");
+  bind_sequence_constraint<float>(m, "Float32SequenceConstraint");
+  bind_sequence_constraint<double>(m, "Float64SequenceConstraint");
+  bind_sequence_constraint<long double>(m, "LongDoubleSequenceConstraint");
+
+  // Sequence constraints for string elements (size + per-element length).
+  py::class_<rosidl_runtime_cpp::SequenceConstraint<rosidl_runtime_cpp::String>>(
+    m, "StringSequenceConstraint")
+    .def(py::init<>())
+    .def_readonly("size", &rosidl_runtime_cpp::SequenceConstraint<rosidl_runtime_cpp::String>::size)
+    .def_readonly("element", &rosidl_runtime_cpp::SequenceConstraint<rosidl_runtime_cpp::String>::element)
+    .def("__eq__", [](const rosidl_runtime_cpp::SequenceConstraint<rosidl_runtime_cpp::String> & self,
+      py::handle other) {
+      if (!py::isinstance<rosidl_runtime_cpp::SequenceConstraint<rosidl_runtime_cpp::String>>(other)) {
+        return false;
+      }
+      return self == py::cast<const rosidl_runtime_cpp::SequenceConstraint<rosidl_runtime_cpp::String> &>(other);
+    })
+    .def("__repr__", [](const rosidl_runtime_cpp::SequenceConstraint<rosidl_runtime_cpp::String> & self) {
+      return "StringSequenceConstraint(size=" + std::to_string(self.size) + ")";
+    });
 }
 
 }  // namespace rosidl_runtime_cpython

@@ -134,6 +134,10 @@ ROSIDL_GENERATOR_PY_PUBLIC_@(pkg) void register_@(msg_underscore)(py::module_ & 
 ROSIDL_GENERATOR_PY_PUBLIC_@(pkg) void register_@(msg_underscore)_containers(py::module_ & m);
 @[end if]@
 
+// Per-message Constraints class.
+ROSIDL_GENERATOR_PY_PUBLIC_@(pkg) void register_@(msg_underscore)_constraints(
+  py::class_<@(msg)Handle, std::shared_ptr<@(msg)Handle>> & cls);
+
 // Element conversion for message-element containers (sequences/arrays of
 // this message type): to_py produces a parent-anchored handle view;
 // to_builtin a dict; from_py copies out of a handle or dict.

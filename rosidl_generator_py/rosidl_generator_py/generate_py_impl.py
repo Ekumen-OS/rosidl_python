@@ -21,6 +21,7 @@ import sys
 from rosidl_parser.definition import AbstractGenericString
 from rosidl_parser.definition import AbstractNestedType
 from rosidl_parser.definition import AbstractSequence
+from rosidl_parser.definition import AbstractString
 from rosidl_parser.definition import AbstractWString
 from rosidl_parser.definition import Action
 from rosidl_parser.definition import Array
@@ -264,28 +265,25 @@ def member_setter_code(member):
             '  }}').format(cast=cast, name=name)
     if kind in ('sequence', 'array'):
         t = _element_cpp(type_)
+        bound = member.type.maximum_size if isinstance(member.type, BoundedSequence) else 0
         n = member.type.size if kind == 'array' else None
-        size_check = (
-            '    if (tmp.size() != {n}) {{\n'
-            '      throw py::value_error("array requires exactly {n} elements");\n'
-            '    }}\n').format(n=n) if n is not None else ''
-        assign = (
-            '    for (size_t i = 0; i < {n}; ++i) {{\n'
-            '      msg_->{name}[i] = tmp[i];\n'
-            '    }}\n').format(n=n, name=name) if n is not None else (
-            '    msg_->{name}.assign(tmp.begin(), tmp.end());\n').format(name=name)
+        if kind == 'sequence':
+            # Reuse the wrapper's source-dispatch assign (zero-copy for
+            # same-dtype numpy/buffer sources, materialize otherwise).
+            return (
+                '  void set_{name}(py::handle value)\n'
+                '  {{\n'
+                '    SequenceWrapper<{t}> w(\n'
+                '      std::unique_ptr<SequenceInterface<{t}>>(new SequenceReference<{t}, {bound}>(&msg_->{name})));\n'
+                '    w.assign(value);\n'
+                '  }}').format(t=t, name=name, bound=bound)
         return (
             '  void set_{name}(py::handle value)\n'
             '  {{\n'
-            '    std::vector<{t}> tmp;\n'
-            '    for (auto item : py::iter(value)) {{\n'
-            '      tmp.push_back({elem_from_py});\n'
-            '    }}\n'
-            '{size_check}'
-            '{assign}'
-            '  }}').format(
-                t=t, name=name, elem_from_py=_element_from_py(type_),
-                size_check=size_check, assign=assign)
+            '    ArrayWrapper<{t}> w(\n'
+            '      std::unique_ptr<ArrayInterface<{t}>>(new ArrayReference<{t}, {n}>(&msg_->{name})));\n'
+            '    w.assign(value);\n'
+            '  }}').format(t=t, name=name, n=n)
     if kind == 'nested':
         h = _handle_name(type_)
         return (
@@ -502,6 +500,8 @@ def generate_py(generator_arguments_file, typesupport_impls):
             'member_from_builtin_code': member_from_builtin_code,
             'member_create_code': member_create_code,
             'member_repr_code': member_repr_code,
+            'constant_to_cpp': constant_to_cpp,
+            'member_constraint_type': member_constraint_type,
             'supported_messages': supported_messages,
             'element_messages': element_messages,
         })
@@ -763,6 +763,69 @@ def primitive_value_to_py(type_, value):
         return '%s' % value
 
     assert False, "unknown primitive type '%s'" % type_.typename
+
+
+def type_constraint_type(type_):
+    """C++ constraint type for a member TYPE, or None if no constraint.
+
+    Mirrors rosidl_generator_cpp.experimental_constraint_type: bounded types
+    carry their limit in the type itself; scalars and primitive arrays are
+    fixed; unbounded strings get StringConstraint; nested messages get
+    Msg::Constraints; sequences get SequenceConstraint<elem>.
+    """
+    if isinstance(type_, BasicType):
+        return None
+    if isinstance(type_, (AbstractString, AbstractWString)):
+        return None if type_.has_maximum_size() else 'rosidl_runtime_cpp::StringConstraint'
+    if isinstance(type_, NamespacedType):
+        return '{}::Constraints'.format(experimental_namespaced_type_name(type_))
+    if isinstance(type_, Array):
+        vt = type_.value_type
+        if isinstance(vt, BasicType):
+            return None
+        if isinstance(vt, (AbstractString, AbstractWString)):
+            return None if vt.has_maximum_size() else 'rosidl_runtime_cpp::StringConstraint'
+        if isinstance(vt, NamespacedType):
+            return '{}::Constraints'.format(experimental_namespaced_type_name(vt))
+        return None
+    if isinstance(type_, AbstractSequence):
+        if isinstance(type_, BoundedSequence):
+            elem_constraint = type_constraint_type(type_.value_type)
+            if elem_constraint is not None:
+                return 'rosidl_runtime_cpp::SequenceConstraint<{}>'.format(
+                    _element_cpp(type_.value_type))
+            return None
+        return 'rosidl_runtime_cpp::SequenceConstraint<{}>'.format(
+            _element_cpp(type_.value_type))
+    return None
+
+
+def member_constraint_type(member):
+    """C++ constraint type for a member, or None if no constraint is needed."""
+    return type_constraint_type(member.type)
+
+
+def constant_to_cpp(constant):
+    """C++ expression producing the Python value for a message constant."""
+    type_ = constant.type
+    value = constant.value
+    if isinstance(type_, BasicType):
+        if type_.typename == 'boolean':
+            return 'py::bool_({})'.format('true' if value else 'false')
+        if type_.typename in INTEGER_TYPES or type_.typename in ('byte', 'char', 'wchar', 'octet'):
+            if type_.typename in ('uint8', 'uint16', 'uint32', 'uint64', 'octet', 'byte', 'char', 'wchar'):
+                # Unsigned: ULL suffix keeps values > LLONG_MAX well-formed.
+                return 'py::int_({}ULL)'.format(value)
+            if value == '-9223372036854775808':
+                # INT64_MIN is not a valid decimal literal; express as LL arithmetic.
+                return 'py::int_(-9223372036854775807LL - 1)'
+            return 'py::int_({})'.format(value)
+        if type_.typename in FLOATING_POINT_TYPES:
+            return 'py::float_({})'.format(value)
+    if isinstance(type_, AbstractGenericString):
+        escaped = str(value).replace('\\', '\\\\').replace('"', '\\"')
+        return 'py::str("{}")'.format(escaped)
+    assert False, "unknown constant type '%s'" % type_
 
 
 def constant_value_to_py(type_, value):

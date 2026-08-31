@@ -220,6 +220,36 @@ public:
     fill_from(impl_.get(), h);
   }
 
+  // Source-dispatch fill (used by generated message field setters): zero-copy
+  // from a same-dtype numpy/buffer source, materialize otherwise.
+  void assign(py::handle value)
+  {
+    if constexpr (is_numpy_compatible<T>::value) {
+      auto src = as_typed_buffer(value);
+      if (src) {
+        if (src->second != impl_->size()) {
+          throw py::value_error("array requires exactly "
+            + std::to_string(impl_->size()) + " elements, got "
+            + std::to_string(src->second));
+        }
+        std::copy(src->first, src->first + src->second, impl_->data());
+        return;
+      }
+    }
+    std::vector<T> tmp;
+    for (auto item : py::iter(value)) {
+      tmp.push_back(ElementTraits<T>::from_py(item));
+    }
+    if (tmp.size() != impl_->size()) {
+      throw py::value_error("array requires exactly "
+        + std::to_string(impl_->size()) + " elements, got "
+        + std::to_string(tmp.size()));
+    }
+    for (size_t i = 0; i < impl_->size(); ++i) {
+      impl_->at(i) = tmp[i];
+    }
+  }
+
   // ---- sequence protocol (NumPy-view backed) ------------------------------
 
   py::ssize_t len() const
@@ -355,6 +385,121 @@ public:
     return py::bool_(false);
   }
 
+  // ---- comparison (list semantics) ----------------------------------------
+
+  bool eq(py::handle other) const
+  {
+    if (py::isinstance<ArrayWrapper<T>>(other)) {
+      auto & o = py::cast<ArrayWrapper<T> &>(other);
+      if (o.impl_->size() != impl_->size()) {
+        return false;
+      }
+      for (size_t i = 0; i < impl_->size(); ++i) {
+        if (!(impl_->at(i) == o.impl_->at(i))) {
+          return false;
+        }
+      }
+      return true;
+    }
+    std::vector<T> other_vec;
+    if (!materialize(other, other_vec)) {
+      return false;
+    }
+    if (other_vec.size() != impl_->size()) {
+      return false;
+    }
+    for (size_t i = 0; i < impl_->size(); ++i) {
+      if (!(impl_->at(i) == other_vec[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool ne(py::handle other) const
+  {
+    return !eq(other);
+  }
+
+  int compare_lexicographic(py::handle other) const
+  {
+    std::vector<T> other_vec;
+    if (py::isinstance<ArrayWrapper<T>>(other)) {
+      auto & o = py::cast<ArrayWrapper<T> &>(other);
+      const size_t common = std::min(impl_->size(), o.impl_->size());
+      for (size_t i = 0; i < common; ++i) {
+        if (impl_->at(i) < o.impl_->at(i)) {
+          return -1;
+        }
+        if (o.impl_->at(i) < impl_->at(i)) {
+          return 1;
+        }
+      }
+      return impl_->size() < o.impl_->size() ? -1 :
+        (impl_->size() > o.impl_->size() ? 1 : 0);
+    }
+    if (!materialize(other, other_vec)) {
+      throw py::type_error("cannot compare array with this type");
+    }
+    const size_t common = std::min(impl_->size(), other_vec.size());
+    for (size_t i = 0; i < common; ++i) {
+      if (impl_->at(i) < other_vec[i]) {
+        return -1;
+      }
+      if (other_vec[i] < impl_->at(i)) {
+        return 1;
+      }
+    }
+    return impl_->size() < other_vec.size() ? -1 :
+      (impl_->size() > other_vec.size() ? 1 : 0);
+  }
+
+  bool lt(py::handle other) const { return compare_lexicographic(other) < 0; }
+  bool le(py::handle other) const { return compare_lexicographic(other) <= 0; }
+  bool gt(py::handle other) const { return compare_lexicographic(other) > 0; }
+  bool ge(py::handle other) const { return compare_lexicographic(other) >= 0; }
+
+  // ---- search / transform (list semantics) --------------------------------
+
+  py::ssize_t index(py::handle value) const
+  {
+    T target = ElementTraits<T>::from_py(value);
+    for (size_t i = 0; i < impl_->size(); ++i) {
+      if (impl_->at(i) == target) {
+        return static_cast<py::ssize_t>(i);
+      }
+    }
+    throw py::value_error("value not in array");
+  }
+
+  py::ssize_t count(py::handle value) const
+  {
+    T target = ElementTraits<T>::from_py(value);
+    py::ssize_t result = 0;
+    for (size_t i = 0; i < impl_->size(); ++i) {
+      if (impl_->at(i) == target) {
+        ++result;
+      }
+    }
+    return result;
+  }
+
+  void sort()
+  {
+    std::sort(impl_->data(), impl_->data() + impl_->size());
+  }
+
+  void reverse()
+  {
+    std::reverse(impl_->data(), impl_->data() + impl_->size());
+  }
+
+  void fill(py::handle value)
+  {
+    T v = ElementTraits<T>::from_py(value);
+    std::fill(impl_->data(), impl_->data() + impl_->size(), v);
+  }
+
   // ---- buffer / numpy -----------------------------------------------------
 
   py::buffer_info buffer() const
@@ -379,6 +524,22 @@ public:
   }
 
 private:
+  // Materialize an iterable into a vector<T>; false on coercion failure.
+  static bool materialize(py::handle h, std::vector<T> & out)
+  {
+    try {
+      for (auto item : py::iter(h)) {
+        out.push_back(ElementTraits<T>::from_py(item));
+      }
+      return true;
+    } catch (const std::exception &) {
+      if (PyErr_Occurred()) {
+        PyErr_Clear();
+      }
+      return false;
+    }
+  }
+
   // Fill the fixed-size storage from *h*: copy directly from a typed source
   // (ArrayWrapper<T>, C-contiguous numpy array of dtype T, or C-contiguous
   // buffer), or materialize an iterable (the necessary temporary for Python
@@ -493,12 +654,24 @@ void register_array(py::module_ & m, const char * name)
     .def("size", &ArrayWrapper<T>::size)
     .def("as_builtin", &ArrayWrapper<T>::as_builtin)
     .def("from_builtin", &ArrayWrapper<T>::from_builtin, py::arg("value"))
+    .def("assign", &ArrayWrapper<T>::assign, py::arg("value"))
     .def("__len__", &ArrayWrapper<T>::len)
     .def("__getitem__", &ArrayWrapper<T>::getitem)
     .def("__setitem__", &ArrayWrapper<T>::setitem)
     .def("__iter__", &ArrayWrapper<T>::iter)
     .def("__reversed__", &ArrayWrapper<T>::reversed)
     .def("__contains__", &ArrayWrapper<T>::contains)
+    .def("__eq__", &ArrayWrapper<T>::eq)
+    .def("__ne__", &ArrayWrapper<T>::ne)
+    .def("__lt__", &ArrayWrapper<T>::lt)
+    .def("__le__", &ArrayWrapper<T>::le)
+    .def("__gt__", &ArrayWrapper<T>::gt)
+    .def("__ge__", &ArrayWrapper<T>::ge)
+    .def("index", &ArrayWrapper<T>::index, py::arg("value"))
+    .def("count", &ArrayWrapper<T>::count, py::arg("value"))
+    .def("sort", &ArrayWrapper<T>::sort)
+    .def("reverse", &ArrayWrapper<T>::reverse)
+    .def("fill", &ArrayWrapper<T>::fill, py::arg("value"))
     .def("numpy", &ArrayWrapper<T>::numpy)
     .def_buffer(&ArrayWrapper<T>::buffer)
     .def("__repr__", &ArrayWrapper<T>::repr);

@@ -20,6 +20,37 @@
 namespace rosidl_runtime_cpython
 {
 
+// String-element arrays (no buffer protocol: strings are not buffer-compatible
+// in the same way as primitives).  Registered so generated getters returning
+// ArrayWrapper<String>/ArrayWrapper<WString> resolve.
+template<typename T>
+void register_string_array(py::module_ & m, const char * name)
+{
+  py::class_<ArrayIterator<T>>(m, (std::string(name) + "Iterator").c_str())
+    .def("__iter__", &ArrayIterator<T>::iter)
+    .def("__next__", &ArrayIterator<T>::next);
+
+  py::class_<ArrayWrapper<T>, std::shared_ptr<ArrayWrapper<T>>>(
+    m, name)
+    .def("size", &ArrayWrapper<T>::size)
+    .def("__len__", &ArrayWrapper<T>::len)
+    .def("__getitem__", &ArrayWrapper<T>::getitem)
+    .def("__setitem__", &ArrayWrapper<T>::setitem)
+    .def("__iter__", &ArrayWrapper<T>::iter)
+    .def("__reversed__", &ArrayWrapper<T>::reversed)
+    .def("__contains__", &ArrayWrapper<T>::contains)
+    .def("__eq__", &ArrayWrapper<T>::eq)
+    .def("__ne__", &ArrayWrapper<T>::ne)
+    .def("index", &ArrayWrapper<T>::index, py::arg("value"))
+    .def("count", &ArrayWrapper<T>::count, py::arg("value"))
+    .def("reverse", &ArrayWrapper<T>::reverse)
+    .def("fill", &ArrayWrapper<T>::fill, py::arg("value"))
+    .def("assign", &ArrayWrapper<T>::assign, py::arg("value"))
+    .def("as_builtin", &ArrayWrapper<T>::as_builtin)
+    .def("from_builtin", &ArrayWrapper<T>::from_builtin, py::arg("value"))
+    .def("__repr__", &ArrayWrapper<T>::repr);
+}
+
 void register_arrays(py::module_ & m)
 {
   // Fixed arrays (ADR-004 amendment): one class per element type.
@@ -40,6 +71,10 @@ void register_arrays(py::module_ & m)
   m.attr("CharArray") = m.attr("UInt8Array");
   m.attr("ByteArray") = m.attr("UInt8Array");
   m.attr("OctetArray") = m.attr("UInt8Array");
+
+  // String-element arrays (no buffer protocol).
+  register_string_array<rosidl_runtime_cpp::String>(m, "StringArray");
+  register_string_array<rosidl_runtime_cpp::WString>(m, "WStringArray");
 }
 
 }  // namespace rosidl_runtime_cpython

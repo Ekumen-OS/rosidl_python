@@ -859,6 +859,11 @@ inline void register_constraints(py::module_ & m)
 {
   py::class_<rosidl_runtime_cpp::StringConstraint>(m, "StringConstraint")
     .def(py::init<>())
+    .def(py::init([](size_t size) {
+      rosidl_runtime_cpp::StringConstraint c;
+      c.size = size;
+      return c;
+    }), py::arg("size"))
     .def_readonly("size", &rosidl_runtime_cpp::StringConstraint::size)
     .def("__eq__", [](const rosidl_runtime_cpp::StringConstraint & self, py::handle other) {
       if (!py::isinstance<rosidl_runtime_cpp::StringConstraint>(other)) {
@@ -899,6 +904,23 @@ inline void register_constraints(py::module_ & m)
     })
     .def("__repr__", [](const rosidl_runtime_cpp::SequenceConstraint<rosidl_runtime_cpp::String> & self) {
       return "StringSequenceConstraint(size=" + std::to_string(self.size) + ")";
+    });
+
+  // Sequence constraints for wstring elements (size + per-element length).
+  py::class_<rosidl_runtime_cpp::SequenceConstraint<rosidl_runtime_cpp::WString>>(
+    m, "WStringSequenceConstraint")
+    .def(py::init<>())
+    .def_readonly("size", &rosidl_runtime_cpp::SequenceConstraint<rosidl_runtime_cpp::WString>::size)
+    .def_readonly("element", &rosidl_runtime_cpp::SequenceConstraint<rosidl_runtime_cpp::WString>::element)
+    .def("__eq__", [](const rosidl_runtime_cpp::SequenceConstraint<rosidl_runtime_cpp::WString> & self,
+      py::handle other) {
+      if (!py::isinstance<rosidl_runtime_cpp::SequenceConstraint<rosidl_runtime_cpp::WString>>(other)) {
+        return false;
+      }
+      return self == py::cast<const rosidl_runtime_cpp::SequenceConstraint<rosidl_runtime_cpp::WString> &>(other);
+    })
+    .def("__repr__", [](const rosidl_runtime_cpp::SequenceConstraint<rosidl_runtime_cpp::WString> & self) {
+      return "WStringSequenceConstraint(size=" + std::to_string(self.size) + ")";
     });
 }
 

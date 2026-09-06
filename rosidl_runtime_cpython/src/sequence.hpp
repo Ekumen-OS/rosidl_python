@@ -31,6 +31,7 @@
 #define ROSIDL_RUNTIME_CPYTHON__SRC__SEQUENCE_HPP_
 
 #include "primitives_common.hpp"
+#include "string.hpp"
 
 #include "rosidl_runtime_cpp/experimental/sequence.hpp"
 

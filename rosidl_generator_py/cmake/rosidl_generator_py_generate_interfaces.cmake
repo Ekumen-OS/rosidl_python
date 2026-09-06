@@ -308,6 +308,14 @@ target_link_libraries(${_target_name_cpython} PRIVATE
   Python3::Python
   rosidl_runtime_cpython::rosidl_runtime_cpython_core
 )
+# The bridge's get_cpp_typesupport calls
+# rosidl_typesupport_cpp::get_message_type_support_handle<Msg>(), whose
+# specialization lives in the package's __rosidl_typesupport_cpp library.
+# Link it when available (not all packages generate a C++ typesupport).
+if(TARGET ${rosidl_generate_interfaces_TARGET}__rosidl_typesupport_cpp)
+  target_link_libraries(${_target_name_cpython} PRIVATE
+    ${rosidl_generate_interfaces_TARGET}__rosidl_typesupport_cpp)
+endif()
 foreach(_pkg_name ${rosidl_generate_interfaces_DEPENDENCY_PACKAGE_NAMES})
   # Link dependency bindings libraries: cross-package nested handle symbols
   # resolve through the library links, not through other extensions.

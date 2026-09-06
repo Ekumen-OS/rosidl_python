@@ -78,6 +78,7 @@ install(TARGETS _raw_buffer_cpp
 add_library(rosidl_runtime_cpython_core SHARED src/core.cpp)
 target_include_directories(rosidl_runtime_cpython_core PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>"
+  "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
   "$<INSTALL_INTERFACE:include>"
   ${rosidl_runtime_c_INCLUDE_DIRS}
 )
@@ -121,11 +122,10 @@ install(TARGETS _primitives
 # ---------------------------------------------------------------------------
 # Exported build interface
 # ---------------------------------------------------------------------------
-# Downstream C/C++ packages (e.g. rosidl_typesupport_xcdr_cpython) consume
-# the C API declared in include/rosidl_runtime_cpython/raw_buffer.h without
-# linking against the _raw_buffer Python module (the C API is resolved at
-# runtime via PyCapsule_Import), so exporting the include directory is
-# sufficient.
+# Downstream C/C++ packages (e.g. rclpy) consume the C API declared in
+# include/rosidl_runtime_cpython/raw_buffer.h without linking against the
+# _raw_buffer Python module (the C API is resolved at runtime via
+# PyCapsule_Import), so exporting the include directory is sufficient.
 install(
   DIRECTORY include/
   DESTINATION include

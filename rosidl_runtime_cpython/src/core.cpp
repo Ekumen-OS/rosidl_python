@@ -14,6 +14,10 @@
 
 #include "primitives_common.hpp"
 
+#include <string>
+
+#include "message_handle.hpp"
+
 namespace rosidl_runtime_cpython
 {
 
@@ -27,6 +31,31 @@ size_t & element_copies()
 {
   static thread_local size_t c = 0;
   return c;
+}
+
+// ----------------------------------------------------------------------------
+// Type-erased message-handle helpers (shared across DSOs)
+// ----------------------------------------------------------------------------
+
+void * unwrap_message_handle(void * py_obj)
+{
+  if (nullptr == py_obj) {
+    return nullptr;
+  }
+  py::handle h = py::reinterpret_borrow<py::object>(
+    reinterpret_cast<PyObject *>(py_obj));
+  auto * base = py::cast<MessageHandleInterface *>(h);
+  return base->get_void();
+}
+
+void detach_message_handle(void * py_obj)
+{
+  if (nullptr == py_obj) {
+    return;
+  }
+  py::handle h = py::reinterpret_borrow<py::object>(
+    reinterpret_cast<PyObject *>(py_obj));
+  py::cast<MessageHandleInterface *>(h)->detach();
 }
 
 }  // namespace rosidl_runtime_cpython

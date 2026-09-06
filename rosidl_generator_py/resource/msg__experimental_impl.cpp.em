@@ -40,6 +40,9 @@ msg = message.structure.namespaced_type.name
 msg_underscore = convert_camel_case_to_lower_case_underscore(msg)
 msg_cpp = '::'.join(
     list(message.structure.namespaced_type.namespaces) + ['experimental', msg])
+# Only direct messages carry a MessageTypeBridge: service/action constituents
+# are deferred (their C++ typesupport handles are not generated yet).
+has_bridge = 'msg' in message.structure.namespaced_type.namespaces
 }@
 @[if message.structure.namespaced_type.name in supported_messages]@
 std::shared_ptr<@(msg)Handle> @(msg)Handle::create(py::kwargs kwargs)
@@ -154,16 +157,63 @@ repr_members = [m for m in message.structure.members
     ")";
 }
 
+@[if has_bridge]@
+// Per-message-type bridge to the C++ typesupport (ADR: MessageTypeBridge).
+// wrap_cpp_message is ALWAYS non-owning (loans: the middleware owns the
+// storage); unwrap_cpp_message returns a raw pointer (no ownership transfer).
+// All functions set CPython error flags and return nullptr on failure.
+const MessageTypeBridge @(msg)Handle::cpython_bridge = {
+  // Generic C++ typesupport dispatch — never specialized to one
+  // implementation; the middleware resolves the concrete one.
+  .get_cpp_typesupport = []() -> const rosidl_message_type_support_t * {
+    return rosidl_typesupport_cpp::get_message_type_support_handle<@(msg_cpp)>();
+  },
+  // Non-owning wrap: used on borrow/take-loaned paths.
+  .wrap_cpp_message = [](void * msg_ptr) -> PyObject * {
+    auto handle = std::make_shared<@(msg)Handle>(
+      static_cast<@(msg_cpp) *>(msg_ptr));
+    return py::cast(handle).release().ptr();
+  },
+  // Raw pointer extraction: no ownership transfer.
+  .unwrap_cpp_message = [](PyObject * py) -> void * {
+    return rosidl_runtime_cpython::unwrap_message_handle(py);
+  },
+  // Copy the C++ Constraints value into a Python-owned object.
+  .wrap_cpp_constraints = [](void * cs) -> PyObject * {
+    auto * cpp_cs = static_cast<@(msg_cpp)::Constraints *>(cs);
+    return py::cast(*cpp_cs).release().ptr();
+  },
+  // Raw C++ Constraints pointer: no ownership transfer.
+  .unwrap_cpp_constraints = [](PyObject * py) -> void * {
+    py::handle h = py::reinterpret_borrow<py::object>(py);
+    return const_cast<@(msg_cpp)::Constraints *>(
+      py::cast<const @(msg_cpp)::Constraints *>(h));
+  },
+};
+
+// Address of cpython_bridge as an integer; exposed to Python as the
+// read-only class attribute __cpython_bridge__.
+const uintptr_t @(msg)Handle::cpython_bridge_address =
+  reinterpret_cast<uintptr_t>(&@(msg)Handle::cpython_bridge);
+@[end if]@
+
 void register_@(msg_underscore)(py::module_ & m)
 {
 @[if msg in element_messages]@
   register_@(msg_underscore)_containers(m);
 @[end if]@
-  py::class_<@(msg)Handle, std::shared_ptr<@(msg)Handle>> cls(m, "@(msg)");
+  py::class_<@(msg)Handle, MessageHandleInterface, std::shared_ptr<@(msg)Handle>> cls(m, "@(msg)");
 @[for constant in message.constants]@
   cls.def_property_readonly_static("@(constant.name)",
     [](py::object) { return @(constant_to_cpp(constant)); });
 @[end for]@
+@[if has_bridge]@
+  // Read-only class attribute exposing the MessageTypeBridge address (a
+  // static const uintptr_t on the handle class).  rclpy resolves the bridge
+  // from the class (or an instance) via this attribute; instances additionally
+  // expose it through MessageHandleInterface::type_bridge().
+  cls.def_readonly_static("__cpython_bridge__", &@(msg)Handle::cpython_bridge_address);
+@[end if]@
   register_@(msg_underscore)_constraints(cls);
   cls
     .def(py::init(&@(msg)Handle::create))
@@ -182,14 +232,14 @@ void register_@(msg_underscore)(py::module_ & m)
 
 // Per-message Constraints class (per-member constraint fields).
 void register_@(msg_underscore)_constraints(
-  py::class_<@(msg)Handle, std::shared_ptr<@(msg)Handle>> & cls)
+  py::class_<@(msg)Handle, MessageHandleInterface, std::shared_ptr<@(msg)Handle>> & cls)
 {
   py::class_<@(msg_cpp)::Constraints>(cls, "Constraints")
     .def(py::init<>())
 @[for member in message.structure.members]@
 @[  if member.name != EMPTY_STRUCTURE_REQUIRED_MEMBER_NAME]@
 @[    if member_constraint_type(member)]@
-    .def_readonly("@(member.name)", &@(msg_cpp)::Constraints::@(member.name))
+    .def_readwrite("@(member.name)", &@(msg_cpp)::Constraints::@(member.name))
 @[    end if]@
 @[  end if]@
 @[end for]@

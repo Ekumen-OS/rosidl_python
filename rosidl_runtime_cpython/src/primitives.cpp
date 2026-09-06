@@ -20,6 +20,7 @@
 #include <chrono>
 
 #include "array.hpp"
+#include "message_handle.hpp"
 #include "scalar.hpp"
 #include "sequence.hpp"
 #include "string.hpp"
@@ -60,4 +61,11 @@ PYBIND11_MODULE(_primitives, m)
   register_sequences(m);
   register_arrays(m);
   register_constraints(m);
+
+  // Non-template message-handle base: generated message handles derive from
+  // it, enabling rclpy and the typesupport adapters to unwrap/wrap
+  // type-erased.  The shared_ptr holder matches the generated handles' holder
+  // type.
+  py::class_<MessageHandleInterface, std::shared_ptr<MessageHandleInterface>>(
+    m, "MessageHandleInterface");
 }

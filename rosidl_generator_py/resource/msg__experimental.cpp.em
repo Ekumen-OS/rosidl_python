@@ -79,6 +79,8 @@ for message, msg_include in bind_messages:
 #include "rosidl_runtime_cpython/sequence.hpp"
 #include "rosidl_runtime_cpython/array.hpp"
 
+#include "rosidl_typesupport_cpp/message_type_support.hpp"
+
 namespace rosidl_runtime_cpython
 {
 
@@ -88,6 +90,9 @@ msg = message.structure.namespaced_type.name
 msg_underscore = convert_camel_case_to_lower_case_underscore(msg)
 msg_cpp = '::'.join(
     list(message.structure.namespaced_type.namespaces) + ['experimental', msg])
+# Only direct messages carry a MessageTypeBridge: service/action constituents
+# are deferred (their C++ typesupport handles are not generated yet).
+has_bridge = 'msg' in message.structure.namespaced_type.namespaces
 }@
 @[if message.structure.namespaced_type.name in supported_messages]@
 // Default visibility: methods referenced cross-package (as_builtin_dict,
@@ -96,13 +101,48 @@ class ROSIDL_GENERATOR_PY_PUBLIC_@(pkg) @(msg)Handle : public MessageHandleBase<
 {
 public:
   using Base = MessageHandleBase<@(msg_cpp)>;
-  using Base::Base;
 
   // Keyword constructor: _init policy + field overrides.
   static std::shared_ptr<@(msg)Handle> create(py::kwargs kwargs);
 
   // Build a @(msg) from a Python object: a @(msg)Handle (copy) or a dict.
   static @(msg_cpp) from_py(py::handle h);
+
+@[if has_bridge]@
+  // Per-message-type bridge to the C++ typesupport (ADR: MessageTypeBridge).
+  static const MessageTypeBridge cpython_bridge;
+
+  // Address of cpython_bridge as an integer; exposed to Python as the
+  // read-only class attribute __cpython_bridge__.
+  static const uintptr_t cpython_bridge_address;
+@[end if]@
+
+  // Top-level: owns the message.
+  explicit @(msg)Handle(std::unique_ptr<@(msg_cpp)> msg)
+  : Base(std::move(msg))
+  {
+@[if has_bridge]@
+    type_bridge_ = &cpython_bridge;
+@[end if]@
+  }
+
+  // Nested view: non-owning reference into a parent message's storage.
+  @(msg)Handle(@(msg_cpp) * msg, py::object parent)
+  : Base(msg, std::move(parent))
+  {
+@[if has_bridge]@
+    type_bridge_ = &cpython_bridge;
+@[end if]@
+  }
+
+  // Top-level non-owning view (loan): the middleware owns the storage.
+  explicit @(msg)Handle(@(msg_cpp) * msg)
+  : Base(msg)
+  {
+@[if has_bridge]@
+    type_bridge_ = &cpython_bridge;
+@[end if]@
+  }
 
 @[for member in message.structure.members]@
 @[  if member.name != EMPTY_STRUCTURE_REQUIRED_MEMBER_NAME]@
@@ -136,7 +176,7 @@ ROSIDL_GENERATOR_PY_PUBLIC_@(pkg) void register_@(msg_underscore)_containers(py:
 
 // Per-message Constraints class.
 ROSIDL_GENERATOR_PY_PUBLIC_@(pkg) void register_@(msg_underscore)_constraints(
-  py::class_<@(msg)Handle, std::shared_ptr<@(msg)Handle>> & cls);
+  py::class_<@(msg)Handle, MessageHandleInterface, std::shared_ptr<@(msg)Handle>> & cls);
 
 // Element conversion for message-element containers (sequences/arrays of
 // this message type): to_py produces a parent-anchored handle view;
@@ -168,6 +208,10 @@ ROSIDL_GENERATOR_PY_PUBLIC_@(pkg) void register_@(msg_underscore)(py::module_ &)
 @[end for]@
 @[for bound, is_wstring in sorted(bounded_string_elems)]@
 // Element conversion for bounded string elements in sequences/arrays.
+// Guarded: multiple message binding headers in the same TU may define the
+// same specialization (e.g. nested messages sharing a bounded string bound).
+#ifndef ROSIDL_RUNTIME_CPYTHON__ELEMENT_TRAITS_BOUNDED@('W' if is_wstring else '')STRING_@(bound)
+#define ROSIDL_RUNTIME_CPYTHON__ELEMENT_TRAITS_BOUNDED@('W' if is_wstring else '')STRING_@(bound)
 template<>
 struct ElementTraits<rosidl_runtime_cpp::Bounded@('W' if is_wstring else '')String<@(bound)>>
 {
@@ -197,6 +241,7 @@ struct ElementTraits<rosidl_runtime_cpp::Bounded@('W' if is_wstring else '')Stri
     return s;
   }
 };
+#endif  // ROSIDL_RUNTIME_CPYTHON__ELEMENT_TRAITS_BOUNDED@('W' if is_wstring else '')STRING_@(bound)
 
 @[end for]@
 }  // namespace rosidl_runtime_cpython

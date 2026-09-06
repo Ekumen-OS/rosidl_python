@@ -175,6 +175,7 @@ if(BUILD_TESTING)
     test/rosidl_runtime_cpython/test_primitives_sequence.py
     test/rosidl_runtime_cpython/test_primitives_reference.py
     test/rosidl_runtime_cpython/test_message_handle.py
+    test/rosidl_runtime_cpython/test_message_constraints.py
   )
   foreach(_test_path ${_pytest_tests})
     get_filename_component(_test_name ${_test_path} NAME_WE)

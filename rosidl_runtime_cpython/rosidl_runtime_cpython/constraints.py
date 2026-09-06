@@ -20,6 +20,12 @@ runtime, providing runtime-queryable bounds for variable-length message
 members.  The classes are the native pybind11 bindings from the
 ``_primitives`` extension; this module re-exports them under the
 ``rosidl_runtime_cpython.constraints`` namespace.
+
+``MessageConstraints`` mirrors ``rosidl_runtime_cpp::MessageConstraints<T>``:
+a composite of blanket limits (``max_string_length`` / ``max_total_size`` /
+``strict``) plus an optional ``type_specific`` slot carrying a per-message
+``Msg.Constraints`` instance.  It is the single type ``rclpy`` accepts for
+publisher / subscription / loan constraints.
 """
 
 from rosidl_runtime_cpython._primitives import BoolSequenceConstraint
@@ -38,7 +44,58 @@ from rosidl_runtime_cpython._primitives import UInt32SequenceConstraint
 from rosidl_runtime_cpython._primitives import UInt64SequenceConstraint
 from rosidl_runtime_cpython._primitives import WStringSequenceConstraint
 
+class MessageConstraints:
+    """Composite constraints for a message type.
+
+    Mirrors ``rosidl_runtime_cpp::MessageConstraints<T>``: blanket limits
+    applying to all variable-length members, plus an optional
+    ``type_specific`` per-message ``Msg.Constraints`` instance.
+
+    :param type_specific: per-message constraints object
+        (e.g. a ``Msg.Constraints`` instance), or ``None`` for blanket
+        limits only.
+    :param max_string_length: blanket maximum length for any string member
+        (characters, 0 = unlimited).
+    :param max_total_size: blanket maximum total serialized size in bytes
+        (0 = unlimited).
+    :param strict: request full per-field validation after the payload-size
+        check (False = cheap payload-size checks, with automatic full
+        validation on failure for diagnostics).
+    """
+
+    def __init__(
+        self,
+        type_specific=None,
+        max_string_length=0,
+        max_total_size=0,
+        strict=False,
+    ):
+        self.type_specific = type_specific
+        self.max_string_length = max_string_length
+        self.max_total_size = max_total_size
+        self.strict = strict
+
+    def __eq__(self, other):
+        if not isinstance(other, MessageConstraints):
+            return NotImplemented
+        return (
+            self.type_specific == other.type_specific
+            and self.max_string_length == other.max_string_length
+            and self.max_total_size == other.max_total_size
+            and self.strict == other.strict
+        )
+
+    def __repr__(self):
+        return (
+            f'MessageConstraints(type_specific={self.type_specific!r}, '
+            f'max_string_length={self.max_string_length!r}, '
+            f'max_total_size={self.max_total_size!r}, '
+            f'strict={self.strict!r})'
+        )
+
+
 __all__ = [
+    'MessageConstraints',
     'StringConstraint',
     'BoolSequenceConstraint',
     'UInt8SequenceConstraint',

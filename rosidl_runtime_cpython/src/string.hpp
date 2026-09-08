@@ -476,7 +476,7 @@ public:
     }
     // Fall back to list/tuple coercion.
     py::list values = py::cast<py::list>(value);
-    if (py::len(values) != slicelength) {
+    if (static_cast<py::ssize_t>(py::len(values)) != slicelength) {
       throw py::value_error("attempt to assign sequence of size "
         + std::to_string(py::len(values)) + " to extended slice of size "
         + std::to_string(slicelength));

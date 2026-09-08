@@ -20,6 +20,8 @@ Mirrors ``rosidl_runtime_cpp::MessageConstraints<T>``: blanket limits
 """
 
 from rosidl_runtime_cpython.constraints import MessageConstraints
+from rosidl_runtime_cpython.constraints import StringConstraint
+from rosidl_runtime_cpython.constraints import UInt8SequenceConstraint
 
 
 def test_defaults_match_zero_initialized_c_struct():
@@ -70,3 +72,17 @@ def test_repr_contains_fields():
     r = repr(MessageConstraints(max_string_length=10, strict=True))
     assert 'max_string_length=10' in r
     assert 'strict=True' in r
+
+
+def test_string_constraint_sized_construction():
+    c = StringConstraint(size=16)
+    assert c.size == 16
+    assert StringConstraint() == StringConstraint()
+    assert StringConstraint(size=16) != StringConstraint(size=64)
+
+
+def test_sequence_constraint_sized_construction():
+    c = UInt8SequenceConstraint(size=400)
+    assert c.size == 400
+    assert UInt8SequenceConstraint() == UInt8SequenceConstraint()
+    assert UInt8SequenceConstraint(size=400) != UInt8SequenceConstraint(size=401)

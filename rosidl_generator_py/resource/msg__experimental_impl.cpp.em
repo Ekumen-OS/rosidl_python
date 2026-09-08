@@ -162,29 +162,33 @@ repr_members = [m for m in message.structure.members
 // wrap_cpp_message is ALWAYS non-owning (loans: the middleware owns the
 // storage); unwrap_cpp_message returns a raw pointer (no ownership transfer).
 // All functions set CPython error flags and return nullptr on failure.
+// Positional initialization in MessageTypeBridge declaration order
+// (get_cpp_typesupport, wrap_cpp_message, unwrap_cpp_message,
+// wrap_cpp_constraints, unwrap_cpp_constraints): designated initializers
+// need C++20 but the generated code targets C++17.
 const MessageTypeBridge @(msg)Handle::cpython_bridge = {
   // Generic C++ typesupport dispatch — never specialized to one
   // implementation; the middleware resolves the concrete one.
-  .get_cpp_typesupport = []() -> const rosidl_message_type_support_t * {
+  []() -> const rosidl_message_type_support_t * {
     return rosidl_typesupport_cpp::get_message_type_support_handle<@(msg_cpp)>();
   },
   // Non-owning wrap: used on borrow/take-loaned paths.
-  .wrap_cpp_message = [](void * msg_ptr) -> PyObject * {
+  [](void * msg_ptr) -> PyObject * {
     auto handle = std::make_shared<@(msg)Handle>(
       static_cast<@(msg_cpp) *>(msg_ptr));
     return py::cast(handle).release().ptr();
   },
   // Raw pointer extraction: no ownership transfer.
-  .unwrap_cpp_message = [](PyObject * py) -> void * {
+  [](PyObject * py) -> void * {
     return rosidl_runtime_cpython::unwrap_message_handle(py);
   },
   // Copy the C++ Constraints value into a Python-owned object.
-  .wrap_cpp_constraints = [](void * cs) -> PyObject * {
+  [](void * cs) -> PyObject * {
     auto * cpp_cs = static_cast<@(msg_cpp)::Constraints *>(cs);
     return py::cast(*cpp_cs).release().ptr();
   },
   // Raw C++ Constraints pointer: no ownership transfer.
-  .unwrap_cpp_constraints = [](PyObject * py) -> void * {
+  [](PyObject * py) -> void * {
     py::handle h = py::reinterpret_borrow<py::object>(py);
     return const_cast<@(msg_cpp)::Constraints *>(
       py::cast<const @(msg_cpp)::Constraints *>(h));
@@ -249,7 +253,7 @@ void register_@(msg_underscore)_constraints(
       }
       return self == py::cast<const @(msg_cpp)::Constraints &>(other);
     })
-    .def("__repr__", [](const @(msg_cpp)::Constraints & self) {
+    .def("__repr__", [](const @(msg_cpp)::Constraints &) {
       return std::string("@(msg).Constraints()");
     });
 // Sequence constraint for sequences/arrays of this message type. Registered

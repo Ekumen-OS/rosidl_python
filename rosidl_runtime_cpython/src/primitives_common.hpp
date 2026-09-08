@@ -642,15 +642,23 @@ inline ValueVariant apply_binary(const ValueVariant & a, const ValueVariant & b,
         case Op::Or: return ValueVariant(static_cast<PT>(xp | yp));
         case Op::Xor: return ValueVariant(static_cast<PT>(xp ^ yp));
         case Op::LShift:
-          if (yp < 0) { throw py::value_error("negative shift count"); }
-          if (yp >= static_cast<PT>(sizeof(PT) * 8)) { return ValueVariant(static_cast<PT>(0)); }
-          return ValueVariant(static_cast<PT>(xp << yp));
-        case Op::RShift:
-          if (yp < 0) { throw py::value_error("negative shift count"); }
-          if (yp >= static_cast<PT>(sizeof(PT) * 8)) {
-            return ValueVariant(static_cast<PT>(xp < 0 ? static_cast<PT>(-1) : static_cast<PT>(0)));
+          if constexpr (std::is_same_v<PT, bool>) {
+            throw py::value_error("shift not supported for bool");
+          } else {
+            if (yp < 0) { throw py::value_error("negative shift count"); }
+            if (yp >= static_cast<PT>(sizeof(PT) * 8)) { return ValueVariant(static_cast<PT>(0)); }
+            return ValueVariant(static_cast<PT>(xp << yp));
           }
-          return ValueVariant(static_cast<PT>(xp >> yp));
+        case Op::RShift:
+          if constexpr (std::is_same_v<PT, bool>) {
+            throw py::value_error("shift not supported for bool");
+          } else {
+            if (yp < 0) { throw py::value_error("negative shift count"); }
+            if (yp >= static_cast<PT>(sizeof(PT) * 8)) {
+              return ValueVariant(static_cast<PT>(xp < 0 ? static_cast<PT>(-1) : static_cast<PT>(0)));
+            }
+            return ValueVariant(static_cast<PT>(xp >> yp));
+          }
         default: throw std::runtime_error("unknown binary op");
       }
     } else {
@@ -843,6 +851,11 @@ void bind_sequence_constraint(py::module_ & m, const char * name)
 {
   py::class_<rosidl_runtime_cpp::SequenceConstraint<T>>(m, name)
     .def(py::init<>())
+    .def(py::init([](size_t size) {
+      rosidl_runtime_cpp::SequenceConstraint<T> c;
+      c.size = size;
+      return c;
+    }), py::arg("size"))
     .def_readonly("size", &rosidl_runtime_cpp::SequenceConstraint<T>::size)
     .def("__eq__", [](const rosidl_runtime_cpp::SequenceConstraint<T> & self, py::handle other) {
       if (!py::isinstance<rosidl_runtime_cpp::SequenceConstraint<T>>(other)) {

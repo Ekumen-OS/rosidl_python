@@ -176,7 +176,10 @@ public:
     Kind p = static_cast<Kind>(kPromotion[static_cast<int>(kind)][static_cast<int>(other_kind)]);
     auto a = convert_to_kind(p, make_variant<kind>(get()));
     auto b = convert_to_kind(p, other_value);
-    return py::bool_(std::visit([](auto x, auto y) { return x == y; }, a, b));
+    return py::bool_(std::visit([](auto x, auto y) {
+      using Common = std::common_type_t<decltype(x), decltype(y)>;
+      return static_cast<Common>(x) == static_cast<Common>(y);
+    }, a, b));
   }
 
   py::object compare(py::handle other, const char * op) const
@@ -191,7 +194,10 @@ public:
     auto b = convert_to_kind(p, other_value);
     bool r = false;
     #define CMP(OP) \
-      std::visit([&](auto x, auto y) { r = x OP y; }, a, b)
+      std::visit([&](auto x, auto y) { \
+        using Common = std::common_type_t<decltype(x), decltype(y)>; \
+        r = static_cast<Common>(x) OP static_cast<Common>(y); \
+      }, a, b)
     if (std::strcmp(op, "<") == 0) { CMP(<); }
     else if (std::strcmp(op, "<=") == 0) { CMP(<=); }
     else if (std::strcmp(op, ">") == 0) { CMP(>); }

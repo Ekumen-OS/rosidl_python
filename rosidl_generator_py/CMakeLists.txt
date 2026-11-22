@@ -85,6 +85,14 @@ if(BUILD_TESTING)
       WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/rosidl_generator_py"
     )
 
+    if(ROSIDL_GENERATOR_PY_REGION_VIEWS)
+      ament_add_pytest_test(test_region_views_py "test/test_region_views.py"
+        APPEND_ENV "PYTHONPATH=${pythonpath}"
+        APPEND_LIBRARY_DIRS "${_append_library_dirs}"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/rosidl_generator_py"
+      )
+    endif()
+
     ament_add_pytest_test(test_convert_round_trip_py "test/test_convert_round_trip.py"
       ENV "ROSIDL_GENERATOR_PY_TYPESUPPORT_DIR=$<TARGET_FILE_DIR:${PROJECT_NAME}_s__rosidl_typesupport_c>"
       APPEND_ENV "PYTHONPATH=${pythonpath}"

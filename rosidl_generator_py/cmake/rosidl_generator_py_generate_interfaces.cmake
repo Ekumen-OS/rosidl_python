@@ -52,6 +52,9 @@ set(_output_path
 set(_generated_extension_files "")
 set(_generated_py_files "")
 set(_generated_c_files "")
+set(_generated_region_sources "")
+set(_region_generator_arg "")
+set(_region_modules "")
 
 foreach(_typesupport_impl ${_typesupport_impls})
   set(_generated_extension_${_typesupport_impl}_files "")
@@ -66,7 +69,17 @@ foreach(_abs_idl_file ${rosidl_generate_interfaces_ABS_IDL_FILES})
     "${_output_path}/${_parent_folder}/_${_module_name}.py")
   list(APPEND _generated_c_files
     "${_output_path}/${_parent_folder}/_${_module_name}_s.c")
+  if(ROSIDL_GENERATOR_PY_REGION_VIEWS AND _parent_folder STREQUAL "msg")
+    list(APPEND _region_modules "${_module_name}")
+    list(APPEND _generated_region_sources
+      "${_output_path}/msg/views/_${_module_name}_region.cpp")
+  endif()
 endforeach()
+
+if(_region_modules)
+  list(APPEND _generated_py_files "${_output_path}/msg/views/__init__.py")
+  set(_region_generator_arg "--region-views")
+endif()
 
 file(MAKE_DIRECTORY "${_output_path}")
 file(WRITE "${_output_path}/__init__.py" "")
@@ -118,6 +131,7 @@ set(target_dependencies
   "${rosidl_generator_py_TEMPLATE_DIR}/_msg.py.em"
   "${rosidl_generator_py_TEMPLATE_DIR}/_srv_pkg_typesupport_entry_point.c.em"
   "${rosidl_generator_py_TEMPLATE_DIR}/_srv.py.em"
+  "${rosidl_generator_py_TEMPLATE_DIR}/idl__region.cpp.em"
   ${rosidl_generate_interfaces_ABS_IDL_FILES}
   ${_dependency_files})
 foreach(dep ${target_dependencies})
@@ -153,7 +167,26 @@ add_subdirectory("${_subdir}" ${rosidl_generate_interfaces_TARGET}${_target_suff
 set_property(
   SOURCE
   ${_generated_extension_files} ${_generated_py_files} ${_generated_c_files}
+  ${_generated_region_sources}
   PROPERTY GENERATED 1)
+
+foreach(_region_module ${_region_modules})
+  set(_region_target "${PROJECT_NAME}__${_region_module}_region")
+  pybind11_add_module(${_region_target} MODULE
+    "${_output_path}/msg/views/_${_region_module}_region.cpp")
+  target_compile_features(${_region_target} PRIVATE cxx_std_20)
+  target_include_directories(${_region_target} PRIVATE ${rosidl_runtime_cpython_INCLUDE_DIRS})
+  target_link_libraries(${_region_target} PRIVATE
+    ${rosidl_generate_interfaces_TARGET}__rosidl_typesupport_cpp)
+  add_dependencies(${_region_target} ${rosidl_generate_interfaces_TARGET}${_target_suffix})
+  set_target_properties(${_region_target} PROPERTIES
+    OUTPUT_NAME "_${_region_module}_region"
+    LIBRARY_OUTPUT_DIRECTORY "${_output_path}/msg/views"
+    RUNTIME_OUTPUT_DIRECTORY "${_output_path}/msg/views")
+  if(NOT rosidl_generate_interfaces_SKIP_INSTALL)
+    install(TARGETS ${_region_target} DESTINATION "${PYTHON_INSTALL_DIR}/${PROJECT_NAME}/msg/views")
+  endif()
+endforeach()
 
 set(_target_name_lib "${rosidl_generate_interfaces_TARGET}__rosidl_generator_py")
 add_library(${_target_name_lib} SHARED ${_generated_c_files})

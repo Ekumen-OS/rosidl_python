@@ -26,11 +26,13 @@ endif()
 
 add_custom_command(
   OUTPUT ${_generated_extension_files} ${_generated_py_files} ${_generated_c_files}
+    ${_generated_region_sources}
   # This assumes that python_cmake_module was found, which is always the case since this is only
   # called from rosidl_generator_py_generate_interfaces.cmake
   COMMAND Python3::Interpreter ${rosidl_generator_py_BIN}
   --generator-arguments-file "${generator_arguments_file}"
   --typesupport-impls "${_typesupport_impls}"
+  ${_region_generator_arg}
   DEPENDS ${target_dependencies} ${rosidl_generate_interfaces_TARGET}
   COMMENT "Generating Python code for ROS interfaces"
   VERBATIM
@@ -46,5 +48,6 @@ else()
     ${_generated_extension_files}
     ${_generated_py_files}
     ${_generated_c_files}
+    ${_generated_region_sources}
   )
 endif()

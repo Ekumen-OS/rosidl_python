@@ -50,9 +50,13 @@ def main(argv=sys.argv[1:]):
         '--typesupport-impls',
         required=True,
         help='All the available typesupport implementations')
+    parser.add_argument(
+        '--region-views', action='store_true',
+        help='Generate Python region-view bindings')
     args = parser.parse_args(argv)
 
-    generate_py(args.generator_arguments_file, args.typesupport_impls.split(';'))
+    generate_py(
+        args.generator_arguments_file, args.typesupport_impls.split(';'), args.region_views)
     return 0
 
 

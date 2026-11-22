@@ -21,12 +21,16 @@
 
   <build_export_depend>rmw</build_export_depend>
   <build_export_depend>rosidl_cmake</build_export_depend>
+  <build_export_depend>pybind11-dev</build_export_depend>
 
   <buildtool_export_depend>ament_cmake</buildtool_export_depend>
   <buildtool_export_depend>ament_index_python</buildtool_export_depend>
   <buildtool_export_depend>rosidl_generator_c</buildtool_export_depend>
+  <buildtool_export_depend>rosidl_generator_cpp</buildtool_export_depend>
   <buildtool_export_depend>rosidl_pycommon</buildtool_export_depend>
   <buildtool_export_depend>rosidl_typesupport_c</buildtool_export_depend>
+  <buildtool_export_depend>rosidl_typesupport_cpp</buildtool_export_depend>
+  <buildtool_export_depend>rosidl_runtime_cpython</buildtool_export_depend>
   <buildtool_export_depend>rosidl_typesupport_interface</buildtool_export_depend>
 
   <!-- TODO: The following 'exec_depend's are only needed in downstream tests,

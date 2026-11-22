@@ -60,7 +60,7 @@ SPECIAL_NESTED_BASIC_TYPES = {
 }
 
 
-def generate_py(generator_arguments_file, typesupport_impls):
+def generate_py(generator_arguments_file, typesupport_impls, region_views=False):
     mapping = {
         '_idl.py.em': '_%s.py',
         '_idl_support.c.em': '_%s_s.c',
@@ -72,6 +72,7 @@ def generate_py(generator_arguments_file, typesupport_impls):
 
     # expand init modules for each directory
     modules = {}
+    region_modules = {}
     idl_content = IdlContent()
     for idl_tuple in args.get('idl_tuples', []):
         idl_parts = idl_tuple.rsplit(':', 1)
@@ -84,6 +85,23 @@ def generate_py(generator_arguments_file, typesupport_impls):
         locator = IdlLocator(*idl_parts)
         idl_file = parse_idl_file(locator)
         idl_content.elements += idl_file.content.elements
+        if region_views and str(idl_rel_path.parent) == 'msg':
+            stem = convert_camel_case_to_lower_case_underscore(idl_rel_path.stem)
+            output = pathlib.Path(args['output_dir']) / 'msg' / 'views' / f'_{stem}_region.cpp'
+            output.parent.mkdir(parents=True, exist_ok=True)
+            expand_template(
+                os.path.join(args['template_dir'], 'idl__region.cpp.em'),
+                {
+                    'package_name': package_name,
+                    'interface_path': idl_rel_path,
+                    'content': idl_file.content,
+                },
+                str(output),
+                minimum_timestamp=get_newest_modification_time(args['target_dependencies']))
+            generated_files.append(str(output))
+            region_modules[stem] = [
+                message.structure.namespaced_type.name
+                for message in idl_file.content.get_elements_of_type(Message)]
 
     # NOTE(sam): remove when a language specific name mangling is implemented
 
@@ -173,6 +191,16 @@ def generate_py(generator_arguments_file, typesupport_impls):
                         f'from {package_name}.{subfolder}.{module_name} import '
                         f'{idl_stem}_SendGoal_Response as {idl_stem}_SendGoal_Response'
                         '  # noqa: F401\n')
+
+    if region_modules:
+        views_init = pathlib.Path(args['output_dir']) / 'msg' / 'views' / '__init__.py'
+        with views_init.open('w') as f:
+            for stem, names in sorted(region_modules.items()):
+                for name in names:
+                    f.write(
+                        f'from {package_name}.msg.views._{stem}_region import '
+                        f'{name} as {name}  # noqa: F401\n')
+        generated_files.append(str(views_init))
 
     # expand templates per available typesupport implementation
     template_dir = args['template_dir']

@@ -18,6 +18,15 @@ macro(rosidl_generator_py_extras BIN GENERATOR_FILES TEMPLATE_DIR)
   find_package(rosidl_generator_c QUIET REQUIRED)
   find_package(rosidl_typesupport_c QUIET REQUIRED)
 
+  option(ROSIDL_GENERATOR_PY_REGION_VIEWS "Generate Python region views" OFF)
+  if(ROSIDL_GENERATOR_PY_REGION_VIEWS)
+    find_package(rosidl_generator_cpp REQUIRED)
+    find_package(rosidl_typesupport_xcdr_cpp REQUIRED)
+    find_package(rosidl_typesupport_cpp REQUIRED)
+    find_package(rosidl_runtime_cpython REQUIRED)
+    find_package(pybind11 REQUIRED)
+  endif()
+
   ament_register_extension(
     "rosidl_generate_idl_interfaces"
     "rosidl_generator_py"

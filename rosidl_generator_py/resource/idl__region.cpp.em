@@ -80,7 +80,7 @@ view = view_type(t)
 using @(alias) = @(handle_type(t));
 using Constraints@(name) = @(view)::Constraints;
 
-static const rosidl_runtime_cpython::MessageTypeBridge bridge@(name) = {
+static const auto bridge@(name) = rosidl_runtime_cpython::make_message_type_bridge<@(view)>(
   []() {return rosidl_typesupport_cpp::get_message_type_support_handle<@(view)>();},
   [](void * message, std::shared_ptr<BorrowedViewState> state, bool read_only) -> PyObject * {
     return py::cast(std::make_shared<@(alias)>(
@@ -91,8 +91,8 @@ static const rosidl_runtime_cpython::MessageTypeBridge bridge@(name) = {
       throw py::type_error("Expected @(name) constraints");
     }
     return py::cast<const Constraints@(name) *>(py::handle(object));
-  }
-};
+  },
+  []() {return rosidl_typesupport_cpp::get_message_type_support_handle<@(view)::PlainMessage>();});
 
 @[end for]@
 PYBIND11_MODULE(@(module_name), module)
